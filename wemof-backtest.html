@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WEMOF 検証ツール</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2230;
+    --border: #2a313c;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --gold: #f0b429;
+    --up: #26a69a;
+    --down: #ef5350;
+    --accent: #58a6ff;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Noto Sans JP", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.65;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  a { color: var(--accent); }
+  code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: .92em; }
+
+  .container { max-width: 1180px; margin: 0 auto; padding: 0 16px 64px; }
+
+  header { border-bottom: 1px solid var(--border); background: linear-gradient(180deg, #17130a, var(--bg)); }
+  .head-inner { max-width: 1180px; margin: 0 auto; padding: 22px 16px 20px; }
+  h1 { margin: 0; font-size: 21px; }
+  h1 .mark { color: var(--gold); }
+  .sub { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+
+  h2 { font-size: 14px; margin: 30px 0 10px; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+
+  button, select, input[type=number], input[type=text] {
+    font: inherit; font-size: 13px; color: var(--text);
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 11px;
+  }
+  button { cursor: pointer; transition: background .15s, border-color .15s; }
+  button:hover:not(:disabled) { border-color: #3d4552; background: #232b3a; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--gold); border-color: var(--gold); color: #17130a; font-weight: 700; }
+  button.primary:hover:not(:disabled) { background: #ffc53d; border-color: #ffc53d; }
+  input[type=number] { width: 84px; }
+
+  .params { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px 20px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field .help { font-size: 11px; color: #6e7681; }
+
+  .checkrow { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; padding: 7px 0; }
+  .checkrow input { accent-color: var(--gold); margin-top: 5px; flex: none; }
+  .checkrow .t { display: flex; flex-direction: column; gap: 2px; }
+  .checkrow .t .help { font-size: 11px; color: #6e7681; }
+  .checkrow.disabled { opacity: .45; }
+
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+  .status {
+    display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--muted);
+    padding: 9px 13px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel); margin: 12px 0;
+  }
+  .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .status.ok .dot { background: var(--up); }
+  .status.warn .dot { background: var(--gold); }
+  .status.err .dot { background: var(--down); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card .k { font-size: 12px; color: var(--muted); }
+  .card .v { font-size: 23px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .card .n { font-size: 11px; color: #6e7681; margin-top: 3px; }
+  .card.hero { border-left: 3px solid var(--gold); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  th, td { padding: 9px 13px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--border); }
+  th { background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--muted); }
+
+  .chart-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 8px; }
+  canvas { display: block; width: 100%; height: 300px; }
+
+  textarea {
+    width: 100%; min-height: 110px; margin-top: 10px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; resize: vertical;
+  }
+
+  .note { font-size: 12px; color: var(--muted); }
+  .scroll { max-height: 420px; overflow-y: auto; border-radius: 12px; }
+
+  .warn-box {
+    border: 1px solid var(--border); border-left: 3px solid var(--gold);
+    background: var(--panel); border-radius: 8px; padding: 13px 16px;
+    font-size: 12.5px; color: var(--muted); margin-top: 14px;
+  }
+  .warn-box strong { color: var(--text); }
+  .warn-box ul { margin: 8px 0 0; padding-left: 20px; }
+  .warn-box li { margin: 4px 0; }
+
+  details { margin-top: 12px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+
+  @media (max-width: 760px) {
+    .scroll table, .scroll thead, .scroll tbody, .scroll th, .scroll td, .scroll tr { display: block; }
+    .scroll thead { display: none; }
+    .scroll tr { border-bottom: 1px solid var(--border); padding: 6px 0; }
+    .scroll td { border: none; padding: 3px 13px; display: flex; justify-content: space-between; gap: 14px; }
+    .scroll td::before { content: attr(data-label); color: var(--muted); font-size: 12px; }
+    .scroll td.num { text-align: right; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="head-inner">
+    <h1><span class="mark">◆</span> WEMOF 検証ツール</h1>
+    <p class="sub">ボリンジャーバンド ±3σ 逆張りスキャルピングの損益分布を、スプレッド込みで検証します</p>
+  </div>
+</header>
+
+<main class="container">
+
+  <div class="warn-box">
+    <strong>このツールが測れること・測れないこと</strong>
+    <ul>
+      <li>WEMOF の核心は「その ±3σ タッチは<em>説明がつく</em>動きか」という裁量判断です。これは自動化できません。</li>
+      <li>したがって本ツールが測るのは <strong>「±3σ タッチで機械的に逆張りした場合」のベースライン</strong> です。WEMOF そのものの成績ではありません。</li>
+      <li>自動化できる範囲の除外条件（高値安値ブレイク・ラウンドナンバー・急騰急落・紐）は代理フィルタとして実装してあります。フィルタの ON/OFF で結果がどう動くかは比較できます。</li>
+      <li>利確1〜2pips に対しスプレッドは0.2〜0.9pips です。<strong>スプレッドを入れずに出した数字は無意味</strong>なので、必ず実際の取引コストを入力してください。</li>
+      <li>5分足の OHLC では足の中の値動き順序が分かりません。利確と損切りが同じ足に収まる場合、本ツールは<strong>損切り優先</strong>（保守的）で処理します。</li>
+    </ul>
+  </div>
+
+  <h2>1. 価格データ</h2>
+  <div class="panel">
+    <div class="row">
+      <input type="file" id="fileInput" accept=".csv,.tsv,.txt" />
+      <button id="demoBtn">デモ用のランダムデータを生成</button>
+      <span class="note">※デモは乱数で作った架空データです。成績の参考にはなりません。</span>
+    </div>
+    <details>
+      <summary>データを直接貼り付ける／対応フォーマット</summary>
+      <p class="note" style="margin-top:10px">
+        1行1本。ヘッダー行は自動で無視します。区切りはカンマ／タブ／セミコロン／空白。<br />
+        ・MT4/MT5 書き出し: <code>2026.09.01,00:00,148.123,148.145,148.110,148.130,1234</code><br />
+        ・日時が1列: <code>2026-09-01 00:00,148.123,148.145,148.110,148.130</code><br />
+        ・UNIX秒/ミリ秒も可。列順は <code>日時, 始値, 高値, 安値, 終値[, 出来高]</code>。
+      </p>
+      <textarea id="pasteInput" placeholder="2026.09.01,00:00,148.123,148.145,148.110,148.130&#10;2026.09.01,00:05,148.130,148.152,148.121,148.140"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button id="pasteBtn">貼り付けたデータを読み込む</button>
+      </div>
+    </details>
+    <div class="status" id="dataStatus"><span class="dot"></span><span id="dataStatusText">データ未読み込み</span></div>
+  </div>
+
+  <h2>2. 検証条件</h2>
+  <div class="panel">
+    <div class="params">
+      <div class="field">
+        <label for="bbPeriod">ボリンジャーバンド 期間</label>
+        <input type="number" id="bbPeriod" value="20" min="5" max="200" step="1" />
+      </div>
+      <div class="field">
+        <label for="bbSigma">σ（標準偏差の倍率）</label>
+        <input type="number" id="bbSigma" value="3" min="1" max="5" step="0.1" />
+      </div>
+      <div class="field">
+        <label for="tpPips">利確（pips）</label>
+        <input type="number" id="tpPips" value="2" min="0.1" max="200" step="0.1" />
+      </div>
+      <div class="field">
+        <label for="spreadPips">スプレッド（pips・往復コスト）</label>
+        <input type="number" id="spreadPips" value="0.4" min="0" max="20" step="0.1" />
+        <span class="help">ドル円の実勢は 0.2〜0.9 程度</span>
+      </div>
+      <div class="field">
+        <label for="exitMode">損切りの扱い</label>
+        <select id="exitMode">
+          <option value="fixed">固定幅で損切りする</option>
+          <option value="timeout">損切りなし・一定時間で撤退</option>
+          <option value="hold">損切りなし・利確まで持ち続ける</option>
+        </select>
+      </div>
+      <div class="field" id="slField">
+        <label for="slPips">損切り（pips）</label>
+        <input type="number" id="slPips" value="6" min="0.1" max="500" step="0.1" />
+      </div>
+      <div class="field" id="holdField">
+        <label for="maxBars">最大保有本数（5分足）</label>
+        <input type="number" id="maxBars" value="288" min="1" max="100000" step="1" />
+        <span class="help">288本 = 24時間</span>
+      </div>
+      <div class="field">
+        <label for="pipSize">1 pip の値幅</label>
+        <select id="pipSize">
+          <option value="auto">自動判定</option>
+          <option value="0.01">0.01（クロス円）</option>
+          <option value="0.0001">0.0001（ドルストレート）</option>
+        </select>
+      </div>
+    </div>
+
+    <h2 style="margin-top:22px">除外フィルタ（「説明がつく動き」の代理）</h2>
+    <div class="params" style="grid-template-columns: repeat(auto-fit, minmax(290px, 1fr))">
+      <div>
+        <label class="checkrow"><input type="checkbox" id="fBreakout" checked>
+          <span class="t"><span>高値安値ブレイクを除外</span>
+          <span class="help">直近 <input type="number" id="breakoutLookback" value="100" min="10" max="2000" step="10" style="width:70px"> 本の高値／安値を更新したタッチは見送る</span></span></label>
+      </div>
+      <div>
+        <label class="checkrow"><input type="checkbox" id="fRound" checked>
+          <span class="t"><span>ラウンドナンバー付近を除外</span>
+          <span class="help">.00 / .50 から <input type="number" id="roundDist" value="3" min="0.1" max="50" step="0.1" style="width:64px"> pips 以内は見送る</span></span></label>
+      </div>
+      <div>
+        <label class="checkrow"><input type="checkbox" id="fSpike" checked>
+          <span class="t"><span>急騰急落を除外（指標・要人発言の代理）</span>
+          <span class="help">足の値幅が ATR(14) の <input type="number" id="spikeMult" value="2.5" min="1" max="10" step="0.1" style="width:64px"> 倍超なら見送る</span></span></label>
+      </div>
+      <div>
+        <label class="checkrow"><input type="checkbox" id="fHimo">
+          <span class="t"><span>紐フィルタ（天底紐理論の「引きつけ」）</span>
+          <span class="help">直前 <input type="number" id="himoBars" value="3" min="2" max="20" step="1" style="width:64px"> 本が全て同じ向きの足（一方的な挙動）の時だけ入る</span></span></label>
+      </div>
+      <div>
+        <label class="checkrow"><input type="checkbox" id="fHours">
+          <span class="t"><span>時間帯で除外（JST）</span>
+          <span class="help">除外する時刻 <input type="text" id="excludeHours" value="21:30-23:00" style="width:130px"> （カンマ区切りで複数可）</span></span></label>
+      </div>
+      <div>
+        <label class="checkrow"><input type="checkbox" id="fBothSides" checked>
+          <span class="t"><span>売り・買いの両方を検証</span>
+          <span class="help">オフにすると −3σ での買いのみ</span></span></label>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:18px">
+      <button class="primary" id="runBtn" disabled>検証を実行</button>
+      <button id="compareBtn" disabled>フィルタ有無を比較</button>
+      <span class="note" id="runNote">まず価格データを読み込んでください</span>
+    </div>
+  </div>
+
+  <div id="results" hidden>
+    <h2>3. 結果</h2>
+    <div class="grid" id="summaryGrid"></div>
+
+    <h2>資産推移（累積pips）</h2>
+    <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
+
+    <h2>詳細</h2>
+    <table id="statsTable"><tbody></tbody></table>
+
+    <div id="compareWrap" hidden>
+      <h2>フィルタ有無の比較</h2>
+      <table id="compareTable">
+        <thead><tr><th>条件</th><th class="num">取引数</th><th class="num">勝率</th><th class="num">合計pips</th><th class="num">最大DD</th><th class="num">PF</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <h2>取引履歴（先頭200件）</h2>
+    <div class="scroll">
+      <table id="tradesTable">
+        <thead><tr><th>#</th><th>方向</th><th>エントリー</th><th class="num">価格</th><th>決済</th><th class="num">損益(pips)</th><th class="num">保有</th><th>理由</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="warn-box" style="margin-top:32px">
+    <strong>ご注意：</strong> 本ツールは過去データの集計であり、投資助言ではありません。過去の成績は将来の成績を保証しません。
+    とくに利確が小さく損切りが大きい（または損切りしない）設定では、<strong>勝率が高くても損益合計がマイナスになり得ます</strong>。
+    勝率や連勝記録ではなく、<strong>合計損益・最大ドローダウン・最大の単一損失</strong>を見て判断してください。
+    また実際の約定ではスリッページ・約定拒否・スプレッド拡大が起こり、本ツールの結果より不利になるのが普通です。
+  </div>
+</main>
+
+<script>
+"use strict";
+
+/* =========================================================================
+   1. データ読み込み
+   ========================================================================= */
+
+/** MT4/MT5 形式（日付と時刻が別列）を含む、区切り文字混在のOHLCパーサ */
+function parseBars(text) {
+  const bars = [];
+  let skipped = 0;
+
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#") || line.startsWith("//")) continue;
+
+    const cells = line.split(/\s*[,\t;]\s*|\s+/).filter(s => s !== "");
+    if (cells.length < 5) { skipped++; continue; }
+
+    // 日付と時刻が別列 (MT4/MT5) なら結合する
+    let idx = 1, stamp = cells[0];
+    if (cells.length >= 6 && /^\d{1,2}:\d{2}(:\d{2})?$/.test(cells[1])) {
+      stamp = cells[0] + " " + cells[1];
+      idx = 2;
+    }
+
+    const t = parseStamp(stamp);
+    const o = Number(cells[idx]), h = Number(cells[idx + 1]),
+          l = Number(cells[idx + 2]), c = Number(cells[idx + 3]);
+    const v = cells.length > idx + 4 ? Number(cells[idx + 4]) : 0;
+
+    if (t == null || ![o, h, l, c].every(Number.isFinite)) { skipped++; continue; }
+
+    bars.push({
+      t, o, h,
+      l: Math.min(l, o, c, h),
+      c,
+      v: Number.isFinite(v) ? v : 0,
+    });
+  }
+
+  // 高値の整合も取り、重複時刻を除いて昇順に
+  for (const b of bars) b.h = Math.max(b.h, b.o, b.c, b.l);
+  const uniq = new Map();
+  for (const b of bars) uniq.set(b.t, b);
+  const out = [...uniq.values()].sort((a, b) => a.t - b.t);
+  return { bars: out, skipped, duplicates: bars.length - out.length };
+}
+
+function parseStamp(s) {
+  const str = String(s).trim();
+  if (/^\d{10}$/.test(str)) return Number(str) * 1000;
+  if (/^\d{13}$/.test(str)) return Number(str);
+  // 2026.09.01 / 2026/09/01 / 2026-09-01 を ISO に寄せる
+  let iso = str.replace(/[./]/g, "-").replace(" ", "T");
+  if (!/T/.test(iso)) iso += "T00:00:00";
+  if (/T\d{1,2}:\d{2}$/.test(iso)) iso += ":00";
+  const ms = Date.parse(iso + "Z");
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** 価格帯から pip の大きさを推定する */
+function detectPipSize(bars) {
+  const p = bars[Math.floor(bars.length / 2)].c;
+  return p > 20 ? 0.01 : 0.0001;
+}
+
+/* =========================================================================
+   2. 指標
+   ========================================================================= */
+
+/** 移動平均と標準偏差を1パスで求める（大量データ向け） */
+function rollingBands(closes, period, mult) {
+  const n = closes.length;
+  const mid = new Array(n).fill(null);
+  const upper = new Array(n).fill(null);
+  const lower = new Array(n).fill(null);
+  let sum = 0, sumSq = 0;
+
+  for (let i = 0; i < n; i++) {
+    const x = closes[i];
+    sum += x; sumSq += x * x;
+    if (i >= period) {
+      const drop = closes[i - period];
+      sum -= drop; sumSq -= drop * drop;
+    }
+    if (i >= period - 1) {
+      const mean = sum / period;
+      // 浮動小数の誤差で僅かに負になることがあるため 0 で床を張る
+      const variance = Math.max(sumSq / period - mean * mean, 0);
+      const sd = Math.sqrt(variance);
+      mid[i] = mean;
+      upper[i] = mean + mult * sd;
+      lower[i] = mean - mult * sd;
+    }
+  }
+  return { mid, upper, lower };
+}
+
+/** Wilder 平滑化の ATR */
+function atrSeries(bars, period = 14) {
+  const n = bars.length;
+  const out = new Array(n).fill(null);
+  if (n <= period) return out;
+
+  let sum = 0;
+  for (let i = 1; i <= period; i++) sum += trueRange(bars, i);
+  let prev = sum / period;
+  out[period] = prev;
+
+  for (let i = period + 1; i < n; i++) {
+    prev = (prev * (period - 1) + trueRange(bars, i)) / period;
+    out[i] = prev;
+  }
+  return out;
+}
+
+function trueRange(bars, i) {
+  const b = bars[i];
+  if (i === 0) return b.h - b.l;
+  const pc = bars[i - 1].c;
+  return Math.max(b.h - b.l, Math.abs(b.h - pc), Math.abs(b.l - pc));
+}
+
+/** 各足について直近 lookback 本（自分を除く）の最高値・最安値 */
+function rollingExtremes(bars, lookback) {
+  const n = bars.length;
+  const hi = new Array(n).fill(null);
+  const lo = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    if (i < lookback) continue;
+    let mx = -Infinity, mn = Infinity;
+    for (let j = i - lookback; j < i; j++) {
+      if (bars[j].h > mx) mx = bars[j].h;
+      if (bars[j].l < mn) mn = bars[j].l;
+    }
+    hi[i] = mx; lo[i] = mn;
+  }
+  return { hi, lo };
+}
+
+/* =========================================================================
+   3. 除外フィルタ
+   ========================================================================= */
+
+function parseHourRanges(text) {
+  const out = [];
+  for (const part of String(text).split(",")) {
+    const m = part.trim().match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+    if (!m) continue;
+    out.push({
+      from: Number(m[1]) * 60 + Number(m[2]),
+      to: Number(m[3]) * 60 + Number(m[4]),
+    });
+  }
+  return out;
+}
+
+function inHourRanges(ms, ranges) {
+  if (!ranges.length) return false;
+  // JST = UTC+9
+  const jst = new Date(ms + 9 * 3600e3);
+  const mins = jst.getUTCHours() * 60 + jst.getUTCMinutes();
+  return ranges.some(r => (r.from <= r.to)
+    ? (mins >= r.from && mins < r.to)
+    : (mins >= r.from || mins < r.to));   // 日跨ぎ
+}
+
+/** ラウンドナンバー(.00/.50)までの距離を pips で返す */
+function distanceToRound(price, pip) {
+  const step = pip === 0.01 ? 0.5 : 0.005;   // クロス円は50銭刻み、ストレートは50pips刻み
+  const rem = Math.abs(price % step);
+  return Math.min(rem, step - rem) / pip;
+}
+
+/* =========================================================================
+   4. バックテスト本体
+   ========================================================================= */
+
+/**
+ * ±σ タッチで逆張りするベースライン戦略を検証する。
+ * 損益は「往復スプレッドを1回分引いた純額」で計算し、
+ * 利確・損切りの判定も同じ純額基準で行う。
+ */
+function backtest(bars, cfg) {
+  const n = bars.length;
+  const closes = bars.map(b => b.c);
+  const { upper, lower } = rollingBands(closes, cfg.bbPeriod, cfg.bbSigma);
+  const atr = cfg.filters.spike ? atrSeries(bars, 14) : null;
+  const ext = cfg.filters.breakout ? rollingExtremes(bars, cfg.breakoutLookback) : null;
+  const hourRanges = cfg.filters.hours ? parseHourRanges(cfg.excludeHours) : [];
+
+  const pip = cfg.pip;
+  const trades = [];
+  const skipCounts = { breakout: 0, round: 0, spike: 0, himo: 0, hours: 0 };
+
+  let pos = null;
+  const start = Math.max(cfg.bbPeriod, cfg.filters.breakout ? cfg.breakoutLookback : 0, 15);
+
+  for (let i = start; i < n; i++) {
+    const b = bars[i];
+
+    // ---- 保有中なら決済判定（エントリー足の翌足以降） ----
+    if (pos) {
+      const held = i - pos.entryIndex;
+      const dir = pos.dir;
+
+      // 純損益(pips) = 値幅 - スプレッド。到達判定も同じ基準に揃える。
+      const tpLevel = dir === 1
+        ? pos.entryPrice + (cfg.tpPips + cfg.spreadPips) * pip
+        : pos.entryPrice - (cfg.tpPips + cfg.spreadPips) * pip;
+      const slLevel = dir === 1
+        ? pos.entryPrice - (cfg.slPips - cfg.spreadPips) * pip
+        : pos.entryPrice + (cfg.slPips - cfg.spreadPips) * pip;
+
+      const hitTp = dir === 1 ? b.h >= tpLevel : b.l <= tpLevel;
+      const hitSl = cfg.exitMode === "fixed" &&
+        (dir === 1 ? b.l <= slLevel : b.h >= slLevel);
+
+      let exitPrice = null, reason = null;
+      // 同一足に両方が収まる場合は損切り優先（保守的）
+      if (hitSl) { exitPrice = slLevel; reason = "損切り"; }
+      else if (hitTp) { exitPrice = tpLevel; reason = "利確"; }
+      else if (cfg.exitMode === "timeout" && held >= cfg.maxBars) { exitPrice = b.c; reason = "時間切れ"; }
+
+      if (exitPrice != null) {
+        trades.push(closeTrade(pos, i, bars, exitPrice, reason, pip, cfg.spreadPips));
+        pos = null;
+      } else {
+        continue;   // 保有中は新規エントリーしない
+      }
+    }
+
+    // ---- 新規エントリー判定 ----
+    if (upper[i] == null) continue;
+
+    let dir = 0;
+    if (b.l <= lower[i]) dir = 1;                          // −σ タッチ → 買い
+    else if (cfg.bothSides && b.h >= upper[i]) dir = -1;    // +σ タッチ → 売り
+    if (!dir) continue;
+
+    // 高値安値ブレイク（＝説明がつく動き）
+    if (cfg.filters.breakout && ext.hi[i] != null) {
+      if (dir === 1 ? b.l < ext.lo[i] : b.h > ext.hi[i]) { skipCounts.breakout++; continue; }
+    }
+    // ラウンドナンバー付近
+    if (cfg.filters.round && distanceToRound(b.c, pip) <= cfg.roundDist) { skipCounts.round++; continue; }
+    // 急騰急落（指標・要人発言の代理）
+    if (cfg.filters.spike && atr[i] != null && (b.h - b.l) > cfg.spikeMult * atr[i]) { skipCounts.spike++; continue; }
+    // 紐（直前が一方的な足で構成されているか）
+    if (cfg.filters.himo && !isHimo(bars, i, cfg.himoBars, dir)) { skipCounts.himo++; continue; }
+    // 時間帯
+    if (cfg.filters.hours && inHourRanges(b.t, hourRanges)) { skipCounts.hours++; continue; }
+
+    pos = { dir, entryIndex: i, entryPrice: b.c, entryTime: b.t };
+  }
+
+  // 期間末に残った建玉は時価で評価して明示する
+  let openTrade = null;
+  if (pos) {
+    openTrade = closeTrade(pos, n - 1, bars, bars[n - 1].c, "期間末・未決済", pip, cfg.spreadPips);
+  }
+
+  return { trades, openTrade, skipCounts, stats: summarize(trades, openTrade) };
+}
+
+/** 紐＝直前 k 本が全て同じ向きの足（逆張り方向に対して一方的） */
+function isHimo(bars, i, k, dir) {
+  for (let j = i - k + 1; j <= i; j++) {
+    if (j < 1) return false;
+    const b = bars[j];
+    // 買いシグナルなら陰線のみ、売りシグナルなら陽線のみで構成されていること
+    if (dir === 1 ? !(b.c < b.o) : !(b.c > b.o)) return false;
+  }
+  return true;
+}
+
+function closeTrade(pos, exitIndex, bars, exitPrice, reason, pip, spreadPips) {
+  const raw = (exitPrice - pos.entryPrice) / pip * pos.dir;
+  return {
+    dir: pos.dir,
+    entryTime: pos.entryTime,
+    entryPrice: pos.entryPrice,
+    exitTime: bars[exitIndex].t,
+    exitPrice,
+    bars: exitIndex - pos.entryIndex,
+    pips: raw - spreadPips,
+    grossPips: raw,
+    reason,
+  };
+}
+
+/* =========================================================================
+   5. 集計
+   ========================================================================= */
+
+function summarize(trades, openTrade) {
+  const all = openTrade ? trades.concat([openTrade]) : trades;
+  const n = all.length;
+  if (!n) {
+    return { trades: 0, wins: 0, losses: 0, winRate: 0, total: 0, gross: 0,
+             maxDD: 0, maxWinStreak: 0, maxLossStreak: 0, worst: 0, best: 0,
+             avgWin: 0, avgLoss: 0, profitFactor: 0, expectancy: 0, avgBars: 0, equity: [] };
+  }
+
+  let total = 0, gross = 0, peak = 0, maxDD = 0;
+  let wins = 0, losses = 0, winSum = 0, lossSum = 0;
+  let streakW = 0, streakL = 0, maxW = 0, maxL = 0;
+  let worst = Infinity, best = -Infinity, barSum = 0;
+  const equity = [];
+
+  for (const t of all) {
+    total += t.pips;
+    gross += t.grossPips;
+    barSum += t.bars;
+    equity.push(total);
+
+    peak = Math.max(peak, total);
+    maxDD = Math.max(maxDD, peak - total);
+
+    worst = Math.min(worst, t.pips);
+    best = Math.max(best, t.pips);
+
+    if (t.pips > 0) {
+      wins++; winSum += t.pips;
+      streakW++; streakL = 0; maxW = Math.max(maxW, streakW);
+    } else {
+      losses++; lossSum += -t.pips;
+      streakL++; streakW = 0; maxL = Math.max(maxL, streakL);
+    }
+  }
+
+  return {
+    trades: n, wins, losses,
+    winRate: (wins / n) * 100,
+    total, gross,
+    spreadCost: gross - total,
+    maxDD,
+    maxWinStreak: maxW, maxLossStreak: maxL,
+    worst, best,
+    avgWin: wins ? winSum / wins : 0,
+    avgLoss: losses ? lossSum / losses : 0,
+    profitFactor: lossSum > 0 ? winSum / lossSum : (winSum > 0 ? Infinity : 0),
+    expectancy: total / n,
+    avgBars: barSum / n,
+    equity,
+  };
+}
+
+/* =========================================================================
+   6. 画面
+   ========================================================================= */
+
+const el = (id) => document.getElementById(id);
+let bars = [];
+let lastResult = null;
+
+function setStatus(node, kind, text) {
+  node.className = "status " + kind;
+  node.querySelector("span:last-child").textContent = text;
+}
+
+function readConfig() {
+  const pipSel = el("pipSize").value;
+  return {
+    bbPeriod: Math.max(5, Number(el("bbPeriod").value) || 20),
+    bbSigma: Number(el("bbSigma").value) || 3,
+    tpPips: Number(el("tpPips").value) || 2,
+    slPips: Number(el("slPips").value) || 6,
+    spreadPips: Math.max(0, Number(el("spreadPips").value) || 0),
+    exitMode: el("exitMode").value,
+    maxBars: Math.max(1, Number(el("maxBars").value) || 288),
+    pip: pipSel === "auto" ? detectPipSize(bars) : Number(pipSel),
+    bothSides: el("fBothSides").checked,
+    breakoutLookback: Math.max(10, Number(el("breakoutLookback").value) || 100),
+    roundDist: Number(el("roundDist").value) || 3,
+    spikeMult: Number(el("spikeMult").value) || 2.5,
+    himoBars: Math.max(2, Number(el("himoBars").value) || 3),
+    excludeHours: el("excludeHours").value,
+    filters: {
+      breakout: el("fBreakout").checked,
+      round: el("fRound").checked,
+      spike: el("fSpike").checked,
+      himo: el("fHimo").checked,
+      hours: el("fHours").checked,
+    },
+  };
+}
+
+function fmt(v, d = 1) {
+  if (!Number.isFinite(v)) return v > 0 ? "∞" : "-";
+  return v.toLocaleString("ja-JP", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+const sign = (v) => (v >= 0 ? "+" : "");
+const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "flat");
+
+function fmtTime(ms) {
+  const d = new Date(ms);
+  const p = (x) => String(x).padStart(2, "0");
+  return `${d.getUTCFullYear()}/${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
+function render(result, cfg) {
+  const s = result.stats;
+  el("results").hidden = false;
+
+  const verdict = s.total > 0 ? "プラス" : "マイナス";
+  const grid = [];
+
+  grid.push(`<div class="card hero">
+    <div class="k">合計損益（スプレッド込み）</div>
+    <div class="v ${cls(s.total)}">${sign(s.total)}${fmt(s.total)} pips</div>
+    <div class="n">${s.trades} 取引で ${verdict}。スプレッド負担 ${fmt(s.spreadCost)} pips を差し引いた後の値です。</div>
+  </div>`);
+
+  grid.push(card("勝率", `${fmt(s.winRate)}%`,
+    `${s.wins}勝 ${s.losses}敗。<strong>勝率が高くても合計損益とは別</strong>です。`));
+
+  grid.push(card("最大ドローダウン", `-${fmt(s.maxDD)} pips`,
+    "資産が直近の山からどれだけ落ち込んだかの最大値。この手法で最も重要な指標です。"));
+
+  grid.push(card("最大の単一損失", `${fmt(s.worst)} pips`,
+    `1回の取引で出た最悪の損失。最大連敗は ${s.maxLossStreak} 回。`));
+
+  grid.push(card("プロフィットファクター", fmt(s.profitFactor, 2),
+    "総利益 ÷ 総損失。1.0を下回ると期待値マイナス。"));
+
+  grid.push(card("1取引あたり期待値", `${sign(s.expectancy)}${fmt(s.expectancy, 2)} pips`,
+    `平均利益 ${fmt(s.avgWin, 2)} / 平均損失 ${fmt(s.avgLoss, 2)} pips`));
+
+  grid.push(card("最大連勝", `${s.maxWinStreak} 回`,
+    "連勝記録は損益の裏付けにはなりません。合計損益と併せて見てください。"));
+
+  grid.push(card("平均保有時間", `${fmt(s.avgBars * 5 / 60, 1)} 時間`,
+    `平均 ${fmt(s.avgBars, 0)} 本（5分足）。`));
+
+  el("summaryGrid").innerHTML = grid.join("");
+
+  // --- 詳細表 ---
+  const sk = result.skipCounts;
+  const rows = [
+    ["検証期間", `${fmtTime(bars[0].t)} 〜 ${fmtTime(bars[bars.length - 1].t)}（${bars.length.toLocaleString()} 本）`],
+    ["条件", `BB(${cfg.bbPeriod}, ±${cfg.bbSigma}σ) / 利確 ${cfg.tpPips}pips / ${exitModeLabel(cfg)} / スプレッド ${cfg.spreadPips}pips`],
+    ["スプレッド控除前の合計", `${sign(s.gross)}${fmt(s.gross)} pips`],
+    ["スプレッド負担の合計", `-${fmt(s.spreadCost)} pips（${s.trades}取引 × ${cfg.spreadPips}pips）`],
+    ["最大の単一利益", `${sign(s.best)}${fmt(s.best)} pips`],
+    ["フィルタで見送った回数", Object.entries(sk).filter(([, v]) => v > 0)
+      .map(([k, v]) => `${filterLabel(k)} ${v.toLocaleString()}回`).join(" / ") || "なし"],
+  ];
+  if (result.openTrade) {
+    rows.push(["期間末の未決済", `${result.openTrade.dir === 1 ? "買い" : "売り"} ${fmtTime(result.openTrade.entryTime)} 建て、評価損益 ${sign(result.openTrade.pips)}${fmt(result.openTrade.pips)} pips（上の集計に含む）`]);
+  }
+  document.querySelector("#statsTable tbody").innerHTML = rows
+    .map(([k, v]) => `<tr><th style="width:230px">${k}</th><td>${v}</td></tr>`).join("");
+
+  drawEquity(s.equity);
+
+  // --- 取引履歴 ---
+  const all = result.openTrade ? result.trades.concat([result.openTrade]) : result.trades;
+  document.querySelector("#tradesTable tbody").innerHTML = all.slice(0, 200).map((t, i) => `
+    <tr>
+      <td data-label="#">${i + 1}</td>
+      <td data-label="方向">${t.dir === 1 ? "買い" : "売り"}</td>
+      <td data-label="エントリー">${fmtTime(t.entryTime)}</td>
+      <td class="num" data-label="価格">${t.entryPrice.toFixed(3)}</td>
+      <td data-label="決済">${fmtTime(t.exitTime)}</td>
+      <td class="num ${cls(t.pips)}" data-label="損益(pips)">${sign(t.pips)}${fmt(t.pips, 2)}</td>
+      <td class="num" data-label="保有">${t.bars}本</td>
+      <td data-label="理由">${t.reason}</td>
+    </tr>`).join("") || `<tr><td colspan="8" class="note">条件に合致する取引がありませんでした。</td></tr>`;
+}
+
+function card(k, v, n) {
+  return `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`;
+}
+
+function exitModeLabel(cfg) {
+  if (cfg.exitMode === "fixed") return `損切り ${cfg.slPips}pips`;
+  if (cfg.exitMode === "timeout") return `損切りなし・${cfg.maxBars}本で撤退`;
+  return "損切りなし・利確まで保有";
+}
+
+function filterLabel(k) {
+  return { breakout: "高値安値ブレイク", round: "ラウンドナンバー", spike: "急騰急落", himo: "紐", hours: "時間帯" }[k] || k;
+}
+
+/* --- 資産推移チャート --- */
+
+function drawEquity(equity) {
+  const cv = el("equityChart");
+  const ctx = cv.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (!equity.length) return;
+
+  const padL = 8, padR = 62, padT = 12, padB = 22;
+  const pw = w - padL - padR, ph = h - padT - padB;
+
+  let min = Math.min(0, ...equity), max = Math.max(0, ...equity);
+  const pad = (max - min) * 0.08 || 1;
+  min -= pad; max += pad;
+
+  const x = (i) => padL + (equity.length === 1 ? pw / 2 : (i / (equity.length - 1)) * pw);
+  const y = (v) => padT + ph - ((v - min) / (max - min)) * ph;
+
+  // 目盛り
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  for (const t of niceTicks(min, max, 5)) {
+    ctx.strokeStyle = Math.abs(t) < 1e-9 ? "rgba(255,255,255,.22)" : "rgba(255,255,255,.06)";
+    ctx.beginPath(); ctx.moveTo(padL, y(t) + .5); ctx.lineTo(w - padR, y(t) + .5); ctx.stroke();
+    ctx.fillStyle = "#8b949e";
+    ctx.fillText(`${t >= 0 ? "+" : ""}${Math.round(t)}`, w - padR + 6, y(t));
+  }
+
+  // ドローダウンの塗り
+  let peak = -Infinity;
+  ctx.fillStyle = "rgba(239,83,80,.14)";
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(equity[0]));
+  const peaks = equity.map(v => (peak = Math.max(peak, v)));
+  peaks.forEach((p, i) => ctx.lineTo(x(i), y(p)));
+  for (let i = equity.length - 1; i >= 0; i--) ctx.lineTo(x(i), y(equity[i]));
+  ctx.closePath(); ctx.fill();
+
+  // 資産曲線
+  const end = equity[equity.length - 1];
+  ctx.strokeStyle = end >= 0 ? "#26a69a" : "#ef5350";
+  ctx.lineWidth = 1.8; ctx.lineJoin = "round";
+  ctx.beginPath();
+  equity.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
+  ctx.stroke();
+
+  ctx.fillStyle = "#8b949e";
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  ctx.fillText("取引回数 →", padL + pw / 2, h - padB + 5);
+}
+
+function niceTicks(min, max, target) {
+  const span = max - min;
+  if (!(span > 0)) return [min];
+  const rough = span / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  const norm = rough / mag;
+  const step = (norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1) * mag;
+  const out = [];
+  for (let t = Math.ceil(min / step) * step; t <= max; t += step) out.push(t);
+  return out;
+}
+
+/* =========================================================================
+   7. 操作
+   ========================================================================= */
+
+function loadText(text, label) {
+  const node = el("dataStatus");
+  const { bars: parsed, skipped, duplicates } = parseBars(text);
+
+  if (parsed.length < 100) {
+    bars = [];
+    el("runBtn").disabled = true;
+    el("compareBtn").disabled = true;
+    setStatus(node, "err",
+      `読み込めた足が ${parsed.length} 本しかありません（最低100本必要）。列の並びが 日時,始値,高値,安値,終値 になっているか確認してください。`);
+    return;
+  }
+
+  bars = parsed;
+  el("runBtn").disabled = false;
+  el("compareBtn").disabled = false;
+  el("runNote").textContent = "";
+
+  const gap = medianGapMinutes(bars);
+  const extra = [];
+  if (skipped) extra.push(`${skipped}行を読み飛ばし`);
+  if (duplicates) extra.push(`重複${duplicates}件を除去`);
+  const warn = Math.abs(gap - 5) > 0.6;
+
+  setStatus(node, warn ? "warn" : "ok",
+    `${label}：${bars.length.toLocaleString()} 本 / ${fmtTime(bars[0].t)} 〜 ${fmtTime(bars[bars.length - 1].t)}`
+    + ` / 足の間隔 中央値 ${fmt(gap, 1)} 分`
+    + (warn ? "（5分足ではないようです。設定の「最大保有本数」は本数基準である点にご注意ください）" : "")
+    + (extra.length ? ` / ${extra.join("、")}` : ""));
+}
+
+function medianGapMinutes(bars) {
+  const gaps = [];
+  for (let i = 1; i < Math.min(bars.length, 500); i++) gaps.push((bars[i].t - bars[i - 1].t) / 60000);
+  gaps.sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)] || 0;
+}
+
+/** 検証用の架空データ（ボラティリティクラスタリングつきランダムウォーク） */
+function makeDemoBars(count = 12000) {
+  const out = [];
+  let price = 148.0, vol = 0.012, t = Date.UTC(2026, 0, 5, 0, 0);
+  for (let i = 0; i < count; i++) {
+    vol = Math.max(0.004, Math.min(0.06, vol * 0.97 + 0.03 * 0.012 + (Math.random() - 0.5) * 0.004));
+    const drift = (Math.random() - 0.5) * vol * 3;
+    const o = price;
+    const c = price + drift;
+    const wick = vol * (0.4 + Math.random());
+    out.push([
+      new Date(t).toISOString().slice(0, 16).replace("T", " "),
+      o.toFixed(3),
+      (Math.max(o, c) + wick * Math.random()).toFixed(3),
+      (Math.min(o, c) - wick * Math.random()).toFixed(3),
+      c.toFixed(3),
+    ].join(","));
+    price = c;
+    t += 5 * 60000;
+  }
+  return out.join("\n");
+}
+
+function run() {
+  if (!bars.length) return;
+  const cfg = readConfig();
+  lastResult = backtest(bars, cfg);
+  el("compareWrap").hidden = true;
+  render(lastResult, cfg);
+  el("results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function compare() {
+  if (!bars.length) return;
+  const base = readConfig();
+
+  const variants = [
+    ["フィルタなし（素の±σ逆張り）", { breakout: false, round: false, spike: false, himo: false, hours: false }],
+    ["高値安値ブレイクのみ除外", { breakout: true, round: false, spike: false, himo: false, hours: false }],
+    ["急騰急落のみ除外", { breakout: false, round: false, spike: true, himo: false, hours: false }],
+    ["紐フィルタのみ", { breakout: false, round: false, spike: false, himo: true, hours: false }],
+    ["現在の設定", base.filters],
+  ];
+
+  const rows = variants.map(([label, filters]) => {
+    const r = backtest(bars, { ...base, filters });
+    const s = r.stats;
+    return `<tr>
+      <td>${label}</td>
+      <td class="num">${s.trades.toLocaleString()}</td>
+      <td class="num">${fmt(s.winRate)}%</td>
+      <td class="num ${cls(s.total)}">${sign(s.total)}${fmt(s.total)}</td>
+      <td class="num down">-${fmt(s.maxDD)}</td>
+      <td class="num">${fmt(s.profitFactor, 2)}</td>
+    </tr>`;
+  });
+
+  // 比較表を出す前に現在設定の結果も描いておく
+  lastResult = backtest(bars, base);
+  render(lastResult, base);
+  document.querySelector("#compareTable tbody").innerHTML = rows.join("");
+  el("compareWrap").hidden = false;
+  el("compareWrap").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function syncExitFields() {
+  const mode = el("exitMode").value;
+  el("slField").style.display = mode === "fixed" ? "" : "none";
+  el("holdField").style.display = mode === "timeout" ? "" : "none";
+}
+
+el("fileInput").addEventListener("change", (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => loadText(String(reader.result), file.name);
+  reader.onerror = () => setStatus(el("dataStatus"), "err", "ファイルを読み込めませんでした。");
+  reader.readAsText(file);
+});
+
+el("pasteBtn").addEventListener("click", () => loadText(el("pasteInput").value, "貼り付けデータ"));
+
+el("demoBtn").addEventListener("click", () => {
+  loadText(makeDemoBars(), "デモ用ランダムデータ（架空）");
+  setStatus(el("dataStatus"), "warn",
+    el("dataStatus").querySelector("span:last-child").textContent + " ／ これは乱数で生成した架空データです。成績の参考にはなりません。");
+});
+
+el("runBtn").addEventListener("click", run);
+el("compareBtn").addEventListener("click", compare);
+el("exitMode").addEventListener("change", syncExitFields);
+window.addEventListener("resize", () => { if (lastResult) drawEquity(lastResult.stats.equity); });
+
+syncExitFields();
+</script>
+</body>
+</html>
