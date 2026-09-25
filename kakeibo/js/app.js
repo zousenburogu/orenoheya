@@ -1,0 +1,1278 @@
+/* 画面の描画と操作 */
+(function () {
+  "use strict";
+
+  const K = window.Kakeibo;
+  const D = window.KDates;
+  const C = window.KChart;
+  const yen = K.yen;
+  const STORE_KEY = "kakeibo.v1";
+  const UI_KEY = "kakeibo.ui";
+
+  /* ---------- 保存 ---------- */
+
+  const load = () => {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      return K.normalizeState(raw ? JSON.parse(raw) : null);
+    } catch (e) {
+      return K.emptyState();
+    }
+  };
+
+  let state = load();
+
+  const save = () => {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    } catch (e) {
+      toast("保存できませんでした（ブラウザの保存領域を確認してください）");
+    }
+  };
+
+  const ui = Object.assign(
+    {
+      tab: "home",
+      sub: null,
+      range: "payday",
+      customEnd: "",
+      scope: "total",
+      scenario: "optimistic",
+      showTable: false,
+      analysisRange: "thisMonth",
+      includePlanned: false,
+      inputKind: "expense",
+    },
+    (() => {
+      try {
+        return JSON.parse(localStorage.getItem(UI_KEY) || "{}");
+      } catch (e) {
+        return {};
+      }
+    })(),
+    { whatIf: [], selectedDate: null, openCat: null, draft: {} }
+  );
+
+  const saveUi = () => {
+    try {
+      const { tab, sub, range, customEnd, scope, analysisRange, includePlanned, inputKind, showTable } = ui;
+      localStorage.setItem(UI_KEY, JSON.stringify({ tab, sub, range, customEnd, scope, analysisRange, includePlanned, inputKind, showTable }));
+    } catch (e) {
+      /* 保存できなくても動作には影響しない */
+    }
+  };
+
+  const commit = () => {
+    save();
+    render();
+  };
+
+  /* ---------- 小物 ---------- */
+
+  const esc = (s) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const today = () => D.today();
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const app = $("#app");
+
+  const toast = (msg) => {
+    const t = document.createElement("div");
+    t.className = "toast";
+    t.setAttribute("role", "status");
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2600);
+  };
+
+  const signed = (n) => `<span class="num ${n > 0 ? "pos" : "neg"}">${n > 0 ? "+" : ""}${esc(yen(n))}</span>`;
+  const accName = (id) => (K.accountById(state, id) || {}).name || "（削除された口座）";
+  const cat = (id) => K.categoryById(state, id) || { name: "その他", color: "#999" };
+  const catSwatch = (id) => `<span class="swatch" style="background:${esc(cat(id).color)}"></span>`;
+
+  const ICONS = {
+    critical: '<svg class="icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 1.5 19 18H1z"/><path d="M9.2 7h1.6l-.2 5.5H9.4zM10 13.6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" fill="var(--surface)"/></svg>',
+    warning: '<svg class="icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="10" cy="10" r="9"/><path d="M9.2 5h1.6l-.2 6.5H9.4zM10 13a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" fill="var(--surface)"/></svg>',
+    info: '<svg class="icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="10" cy="10" r="9"/><path d="M9.2 8.5h1.6V15H9.2zM10 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" fill="var(--surface)"/></svg>',
+    good: '<svg class="icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="10" cy="10" r="9"/><path d="m5.8 10.2 2.8 2.8 5.6-5.6" fill="none" stroke="var(--surface)" stroke-width="2"/></svg>',
+  };
+  ICONS.serious = ICONS.warning;
+  const LEVEL_LABEL = { critical: "危険", serious: "要確認", warning: "注意", info: "お知らせ", good: "順調" };
+
+  const alertBox = (level, html) =>
+    `<div class="alert ${level}" role="${level === "critical" ? "alert" : "note"}">${ICONS[level]}<div><strong>${LEVEL_LABEL[level]}</strong>${html}</div></div>`;
+
+  const accountOptions = (selected, { includeEmpty = false } = {}) =>
+    (includeEmpty ? `<option value="">（なし）</option>` : "") +
+    state.accounts.map((a) => `<option value="${esc(a.id)}" ${a.id === selected ? "selected" : ""}>${esc(a.name)}</option>`).join("");
+
+  const categoryOptions = (kind, selected) =>
+    state.categories
+      .filter((c) => !kind || c.kind === kind)
+      .map((c) => `<option value="${esc(c.id)}" ${c.id === selected ? "selected" : ""}>${esc(c.name)}</option>`)
+      .join("");
+
+  const needAccounts = () =>
+    state.accounts.length
+      ? ""
+      : `<div class="card empty"><p>まずは口座を登録しましょう。</p><div class="row" style="justify-content:center;gap:8px">
+          <button class="primary" data-action="account-new">口座を追加</button>
+          <button data-action="sample">サンプルデータで試す</button></div></div>`;
+
+  /* ---------- 期間 ---------- */
+
+  const rangeEnd = (key, t = today()) => {
+    switch (key) {
+      case "payday": {
+        let p = K.nextPayday(state.settings, t);
+        if (p === t) p = K.nextPayday(state.settings, D.addDays(t, 1));
+        return p;
+      }
+      case "month": return D.endOfMonth(t);
+      case "nextMonth": return D.endOfMonth(t, 1);
+      case "year": return `${t.slice(0, 4)}-12-31`;
+      case "90": return D.addDays(t, 90);
+      case "custom": return ui.customEnd && ui.customEnd > t ? ui.customEnd : D.addDays(t, 30);
+      default: return D.addDays(t, 30);
+    }
+  };
+  const RANGES = [
+    ["payday", "次の給料日まで"],
+    ["month", "今月末"],
+    ["nextMonth", "来月末"],
+    ["year", "年末まで"],
+    ["90", "90日"],
+    ["custom", "日付指定"],
+  ];
+
+  /* ---------- 画面: ホーム ---------- */
+
+  const viewHome = () => {
+    if (!state.accounts.length) {
+      return `<section class="card">
+        <h3>残高予測家計簿へようこそ</h3>
+        <p class="muted small">給料日から次の給料日まで、口座残高がどう動くかを自動で予測します。口座・定期の支払い・日々の生活費を登録すると、残高が一番低くなる日がわかります。</p>
+      </section>${needAccounts()}`;
+    }
+    const t = today();
+    const total = K.sumBalances(state, K.totalAccountIds(state));
+    const payday = rangeEnd("payday", t);
+    const f = K.forecast(state, { today: t, end: payday, scenario: "pessimistic" });
+    const al = K.alerts(state, { today: t });
+    const excluded = state.accounts.filter((a) => a.includeInTotal === false);
+
+    let html = "";
+    html += `<section class="tiles">
+      <div class="card tile hero"><div class="label">総資産（合計対象の口座）</div><div class="value num">${esc(yen(total))}</div>
+        <div class="sub">${excluded.length ? `合計外: ${excluded.map((a) => `${esc(a.name)} ${esc(yen(a.balance))}`).join("、")}` : `${state.accounts.length}口座`}</div></div>
+      <div class="card tile"><div class="label">給料日（${esc(D.dayLabelLong(payday))}）までの最低残高</div><div class="value num">${esc(yen(f.min.balance))}</div>
+        <div class="sub">${esc(D.dayLabelLong(f.min.date))}・あと${D.diffDays(t, payday)}日</div></div>
+      <div class="card tile"><div class="label">給料日前日の残高見込み</div><div class="value num">${esc(yen((f.days[f.days.length - 2] || f.days[0]).balance))}</div>
+        <div class="sub">着金待ちは含めない場合</div></div>
+    </section>`;
+
+    html += `<section>${al.length ? al.map((a) => alertBox(a.level, `<div>${esc(a.message)}</div>`)).join("") : alertBox("good", "<div>60日先まで、残高が目安を下回る予測はありません</div>")}</section>`;
+
+    html += `<section class="card"><div class="row between"><h3>残高推移（給料日まで）</h3><button class="link small" data-tab-go="forecast">詳しく ›</button></div>
+      <div class="chart" id="homeChart"></div></section>`;
+
+    if (state.goals.length) {
+      const g = state.goals[0];
+      const p = K.goalPlan(state, g, { today: t });
+      html += `<section class="card"><div class="row between"><h3>${esc(g.label || "目標")}</h3><button class="link small" data-sub-go="goals">目標 ›</button></div>
+        <div class="row between small"><span class="num">${esc(yen(p.current))} / ${esc(yen(p.target))}</span><span class="num">${Math.round(p.progress * 100)}%</span></div>
+        <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p.progress * 100)}" aria-label="目標の進捗"><div style="width:${(p.progress * 100).toFixed(1)}%"></div></div>
+        <p class="small" style="margin:8px 0 0">${p.onTrack ? `${ICONS.good.replace('class="icon"', 'class="icon" style="width:14px;height:14px;vertical-align:-2px;color:var(--good)"')} 順調` : `要調整：月あと ${esc(yen(p.gapMonthly))} の上積みが必要`}<span class="muted">（必要 ${esc(yen(p.requiredMonthly))}/月・ペース ${esc(yen(p.pace))}/月）</span></p>
+      </section>`;
+    }
+
+    html += `<section class="card"><h3>これからの予定（7日間）</h3>${upcomingList(t, D.addDays(t, 7))}</section>`;
+
+    const overdue = state.transactions.filter((x) => x.status === "planned" && x.date < t);
+    if (overdue.length) {
+      html += `<section class="card"><h3>確認待ちの予定</h3><p class="tiny">日付を過ぎた予定です。実際に支払った／入金されたら「確定」してください。予測では今日の出来事として計上しています。</p>
+        <ul class="list">${overdue.map(txItem).join("")}</ul></section>`;
+    }
+    return html;
+  };
+
+  const upcomingList = (from, to) => {
+    const ev = K.collectEvents(state, from, to, { today: from, scenario: "optimistic" }).filter((e) => e.source === "recurrence" || e.source === "planned" || e.source === "transfer");
+    if (!ev.length) return `<p class="muted small">予定はありません</p>`;
+    const seen = new Set();
+    return `<ul class="list">${ev
+      .map((ev) => {
+        let e = ev;
+        if (e.source === "transfer") {
+          const key = `trf${e.refId}`;
+          if (seen.has(key)) return "";
+          seen.add(key);
+          const tr = state.transfers.find((x) => x.id === e.refId);
+          return `<li><span class="date">${esc(D.dayLabelLong(e.date))}</span><div class="grow"><div class="ellipsis">${esc(e.label)}</div><div class="meta">振替・${esc(K.TRANSFER_STATUS[tr.status])}</div></div><span class="amt num">${esc(yen(tr.amount))}</span></li>`;
+        }
+        const recTransfer = e.source === "recurrence" && e.transfer;
+        if (recTransfer) {
+          const key = `rt${e.refId}${e.original}`;
+          if (seen.has(key)) return "";
+          seen.add(key);
+          const r = state.recurrences.find((x) => x.id === e.refId);
+          e = Object.assign({}, e, { accountId: r.accountId, meta: `${accName(r.accountId)} → ${accName(r.toAccountId)}・定期の振替` });
+        }
+        const actions =
+          e.source === "recurrence"
+            ? `<button class="small" data-action="occ-done" data-id="${esc(e.refId)}" data-date="${esc(e.original)}" title="残高に反映して完了">済</button>
+               <button class="small ghost" data-action="occ-edit" data-id="${esc(e.refId)}" data-date="${esc(e.original)}">変更</button>`
+            : `<button class="small" data-action="tx-confirm" data-id="${esc(e.refId)}">確定</button>`;
+        return `<li><span class="date">${esc(D.dayLabelLong(e.date))}</span>${catSwatch(e.categoryId)}<div class="grow"><div class="ellipsis">${esc(e.label)}</div><div class="meta">${esc(e.meta || `${accName(e.accountId)}${e.source === "recurrence" ? "・定期" : "・予定"}`)}</div></div>
+          <span class="amt">${recTransfer ? `<span class="num">${esc(yen(Math.abs(e.amount)))}</span>` : signed(e.amount)}</span><span class="actions">${actions}</span></li>`;
+      })
+      .join("")}</ul>`;
+  };
+
+  /* ---------- 画面: 残高予測 ---------- */
+
+  const forecastData = () => {
+    const t = today();
+    const end = rangeEnd(ui.range, t);
+    const scope = ui.scope === "total" ? "total" : [ui.scope];
+    const base = { today: t, end, scope };
+    const inflight = K.hasInFlightInScope(state, scope, end);
+    const main = K.forecast(state, Object.assign({}, base, { scenario: ui.scenario, whatIf: ui.whatIf }));
+    let compare = null;
+    let names = ["残高"];
+    if (ui.whatIf.length) {
+      compare = K.forecast(state, Object.assign({}, base, { scenario: ui.scenario }));
+      names = ["もしも込み", "現在の予定"];
+    } else if (inflight) {
+      compare = K.forecast(state, Object.assign({}, base, { scenario: ui.scenario === "optimistic" ? "pessimistic" : "optimistic" }));
+      names = ui.scenario === "optimistic" ? ["着金あり", "着金なし"] : ["着金なし", "着金あり"];
+    }
+    return { t, end, main, compare, names, inflight };
+  };
+
+  const viewForecast = () => {
+    if (!state.accounts.length) return needAccounts();
+    const { t, end, main, compare, names, inflight } = forecastData();
+    const threshold = Number(state.settings.threshold) || 0;
+
+    let html = `<section class="row wrap" style="gap:8px">
+      <div class="scroll-x" role="group" aria-label="期間">${RANGES.map(([k, l]) => `<button class="chip" aria-pressed="${ui.range === k}" data-action="range" data-key="${k}">${l}</button>`).join("")}</div>
+    </section>`;
+    html += `<section class="grid2 collapse">
+      ${ui.range === "custom" ? `<label class="field">終了日<input type="date" data-bind="customEnd" value="${esc(end)}" min="${esc(D.addDays(t, 1))}"></label>` : ""}
+      <label class="field">対象<select data-bind="scope"><option value="total">合計（${K.totalAccountIds(state).length}口座）</option>${state.accounts.map((a) => `<option value="${esc(a.id)}" ${ui.scope === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label>
+    </section>`;
+
+    // サマリー
+    const minCls = main.min.balance < 0 ? "critical" : main.min.balance < threshold ? "warning" : "good";
+    html += `<section>${alertBox(minCls, `<div><b class="num">${esc(D.dayLabelLong(main.min.date))}</b>に残高が<b class="num">${esc(yen(main.min.balance))}</b>まで下がります${
+      compare && ui.whatIf.length ? `（もしもなし: ${esc(yen(compare.min.balance))}）` : ""
+    }</div>`)}</section>`;
+
+    html += `<section class="tiles">
+      <div class="card tile"><div class="label">今日</div><div class="value num">${esc(yen(main.startBalance))}</div></div>
+      <div class="card tile"><div class="label">${esc(D.dayLabelLong(end))}時点</div><div class="value num">${esc(yen(main.endBalance))}</div>
+        <div class="sub">${compare ? `${esc(names[1])}: ${esc(yen(compare.endBalance))}` : `増減 ${esc(yen(main.endBalance - main.startBalance))}`}</div></div>
+    </section>`;
+
+    html += `<section class="card">
+      ${compare ? `<div class="legend"><span><i style="border-color:var(--s1)"></i>${esc(names[0])}</span><span><i class="dashed" style="border-color:var(--s2)"></i>${esc(names[1])}</span></div>` : ""}
+      <div class="chart" id="forecastChart"></div>
+      <p class="tiny" style="margin:6px 0 0">グラフをタップするとその日の内訳を表示します。灰色の帯は休日（生活費は休日単価）。</p>
+      ${inflight ? `<div class="row wrap" style="margin-top:8px"><span class="small muted">着金待ちの振替:</span>
+        <div class="seg" style="flex:1;max-width:280px"><button aria-pressed="${ui.scenario === "optimistic"}" data-action="scenario" data-key="optimistic">着金する前提</button><button aria-pressed="${ui.scenario === "pessimistic"}" data-action="scenario" data-key="pessimistic">着金しない前提</button></div></div>` : ""}
+    </section>`;
+
+    html += `<section class="card" id="dayDetail">${dayDetail(main)}</section>`;
+
+    // What-if
+    html += `<section class="card"><h3>もしも（What-if）</h3>
+      <p class="tiny">仮の支出・収入をグラフに反映します。保存はされません。</p>
+      ${ui.whatIf.length ? `<ul class="list">${ui.whatIf.map((w) => `<li><span class="date">${esc(D.dayLabelLong(w.date))}</span><div class="grow"><div class="ellipsis">${esc(w.label || "仮の支出")}</div><div class="meta">${esc(accName(w.accountId))}</div></div><span class="amt">${signed(w.amount)}</span>
+        <span class="actions"><button class="small" data-action="whatif-save" data-id="${esc(w.id)}">予定に追加</button><button class="small ghost" data-action="whatif-remove" data-id="${esc(w.id)}" aria-label="削除">×</button></span></li>`).join("")}</ul>` : ""}
+      <form class="grid2 collapse" data-form="whatif" style="margin-top:8px">
+        <label class="field">金額（支出）<input name="amount" inputmode="numeric" pattern="[0-9,]*" placeholder="30000" required></label>
+        <label class="field">日付<input type="date" name="date" value="${esc(t)}" required></label>
+        <label class="field">内容<input name="label" placeholder="イヤホン"></label>
+        <label class="field">口座<select name="accountId">${accountOptions(ui.scope !== "total" ? ui.scope : state.settings.livingAccountId || (state.accounts[0] || {}).id)}</select></label>
+        <label class="check"><input type="checkbox" name="income"> 収入として試す</label>
+        <button class="primary" type="submit">グラフに反映</button>
+      </form>
+    </section>`;
+
+    html += `<section class="card"><div class="row between"><h3>日別の表</h3><button class="small" data-action="toggle-table">${ui.showTable ? "閉じる" : "表で見る"}</button></div>
+      ${ui.showTable ? forecastTable(main) : ""}</section>`;
+    return html;
+  };
+
+  const eventRow = (e) =>
+    `<li>${catSwatch(e.categoryId)}<div class="grow"><div class="ellipsis">${esc(e.label)}</div><div class="meta">${esc(accName(e.accountId))}${e.inFlight ? "・着金待ち" : ""}${e.overdue ? "・日付超過の予定" : ""}</div></div><span class="amt">${signed(e.amount)}</span></li>`;
+
+  const dayDetail = (f) => {
+    const date = ui.selectedDate && f.days.some((d) => d.date === ui.selectedDate) ? ui.selectedDate : f.min.date;
+    const idx = f.days.findIndex((d) => d.date === date);
+    const day = f.days[idx];
+    const prev = idx > 0 ? f.days[idx - 1].balance : f.startBalance;
+    const net = day.events.reduce((s, e) => s + e.amount, 0);
+    const hol = D.holidayName(date);
+    return `<div class="row between"><h3>${esc(D.dayLabelLong(date))}${hol ? ` <span class="badge">${esc(hol)}</span>` : day.dayOff ? ` <span class="badge">休日</span>` : ""}${date === f.min.date ? ` <span class="badge accent">最低残高の日</span>` : ""}</h3>
+      <span class="num small muted">${idx > 0 ? `${esc(yen(prev))} → ` : ""}<b style="color:var(--text)">${esc(yen(day.balance))}</b></span></div>
+      ${day.events.length ? `<ul class="list">${day.events.map(eventRow).join("")}</ul><div class="row between small" style="margin-top:6px"><span class="muted">この日の増減</span>${signed(net)}</div>` : `<p class="muted small">入出金はありません</p>`}`;
+  };
+
+  const forecastTable = (f) => {
+    const rows = f.days
+      .filter((d) => d.events.some((e) => e.source !== "living" && e.source !== "misc") || d.date === f.min.date || d === f.days[f.days.length - 1])
+      .map((d) => {
+        const main = d.events.filter((e) => e.source !== "living" && e.source !== "misc");
+        const daily = d.events.filter((e) => e.source === "living" || e.source === "misc").reduce((s, e) => s + e.amount, 0);
+        return `<tr><td>${esc(D.dayLabelLong(d.date))}</td><td>${main.map((e) => `<div class="ev-line"><span>${esc(e.label)}</span>${signed(e.amount)}</div>`).join("") || "—"}</td><td class="r">${daily ? signed(daily) : "—"}</td><td class="r num"><b>${esc(yen(d.balance))}</b></td></tr>`;
+      })
+      .join("");
+    return `<p class="tiny">入出金がある日のみ表示（生活費・雑費の日割りはまとめて表示）</p><div class="table-wrap"><table class="data"><thead><tr><th>日付</th><th>入出金</th><th class="r">生活費等</th><th class="r">残高</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  };
+
+  /* ---------- 画面: 入力 ---------- */
+
+  const viewInput = () => {
+    if (!state.accounts.length) return needAccounts();
+    const t = today();
+    const kind = ui.inputKind;
+    const d = ui.draft;
+    let html = `<section><div class="seg" role="group" aria-label="入力の種類">
+      <button aria-pressed="${kind === "expense"}" data-action="kind" data-key="expense">支出</button>
+      <button aria-pressed="${kind === "income"}" data-action="kind" data-key="income">収入</button>
+      <button aria-pressed="${kind === "transfer"}" data-action="kind" data-key="transfer">振替</button></div></section>`;
+
+    if (kind === "transfer") {
+      html += `<section class="card"><form class="stack" data-form="transfer">
+        <label class="field">金額<input class="amount num" name="amount" inputmode="numeric" pattern="[0-9,]*" placeholder="0" required></label>
+        <div class="grid2"><label class="field">出金元<select name="fromId">${accountOptions(d.fromId || state.settings.salaryAccountId)}</select></label>
+        <label class="field">入金先<select name="toId">${accountOptions(d.toId || state.settings.livingAccountId || (state.accounts[1] || {}).id)}</select></label></div>
+        <div class="grid2"><label class="field">日付（着金予定日）<input type="date" name="date" value="${esc(t)}" required></label>
+        <label class="field">状態<select name="status">${Object.entries(K.TRANSFER_STATUS).map(([k, v]) => `<option value="${k}" ${k === "done" ? "selected" : ""}>${v}</option>`).join("")}</select></label></div>
+        <label class="field">メモ<input name="label" placeholder="例: FX出金"></label>
+        <p class="tiny" style="margin:0">「申請中」「着金待ち」は出金元からすでに引かれ、入金先には着金予定日に入る前提で予測します。</p>
+        <button class="primary" type="submit">振替を登録</button></form></section>`;
+    } else {
+      const templates = state.recurrences.filter((r) => !r.toAccountId && (kind === "expense" ? r.amount < 0 : r.amount > 0));
+      html += templates.length
+        ? `<section><h2>テンプレート（定期ルールから）</h2><div class="scroll-x">${templates.map((r) => `<button class="chip" data-action="template" data-id="${esc(r.id)}">${esc(r.label)} <span class="tiny num">${esc(yen(Math.abs(r.amount)))}</span></button>`).join("")}</div></section>`
+        : "";
+      const defaultCat = d.categoryId || (kind === "expense" ? "cat_living" : "cat_salary");
+      html += `<section class="card"><form class="stack" data-form="tx">
+        <label class="field">金額<input class="amount num" name="amount" inputmode="numeric" pattern="[0-9,]*" placeholder="0" value="${esc(d.amount || "")}" required autofocus></label>
+        <div class="field" style="display:grid;gap:6px"><span class="small muted">カテゴリ</span><div class="chips" role="radiogroup">${state.categories
+          .filter((c) => c.kind === kind)
+          .map((c) => `<label class="chip btn" style="${c.id === defaultCat ? "border-color:var(--accent)" : ""}"><input type="radio" name="categoryId" value="${esc(c.id)}" ${c.id === defaultCat ? "checked" : ""} style="width:auto;accent-color:var(--accent)"> ${esc(c.name)}</label>`)
+          .join("")}</div></div>
+        <div class="grid2"><label class="field">日付<input type="date" name="date" value="${esc(d.date || t)}" required></label>
+        <label class="field">口座<select name="accountId">${accountOptions(d.accountId || (kind === "income" ? state.settings.salaryAccountId : state.settings.livingAccountId) || state.accounts[0].id)}</select></label></div>
+        <label class="field">内容<input name="label" value="${esc(d.label || "")}" placeholder="${kind === "expense" ? "例: 退去費、旅行代" : "例: FX利益、仕送りの返済"}"></label>
+        <label class="check"><input type="checkbox" name="planned"> 予定として登録（未来の日付は自動で予定になります）</label>
+        <details><summary>詳細設定</summary><label class="check" style="margin-top:8px"><input type="checkbox" name="reflected"> 口座残高はもう更新済み（残高を変えずに記録だけする）</label></details>
+        <button class="primary" type="submit">${kind === "expense" ? "支出" : "収入"}を登録</button></form></section>`;
+    }
+
+    const planned = state.transactions.filter((x) => x.status === "planned").sort((a, b) => (a.date < b.date ? -1 : 1));
+    const recent = state.transactions.filter((x) => x.status === "actual").sort((a, b) => (a.date > b.date ? -1 : 1)).slice(0, 30);
+    html += `<section class="card"><h3>予定の単発取引</h3>${planned.length ? `<ul class="list">${planned.map(txItem).join("")}</ul>` : `<p class="muted small">なし</p>`}</section>`;
+    html += `<section class="card"><h3>最近の実績</h3>${recent.length ? `<ul class="list">${recent.map(txItem).join("")}</ul>` : `<p class="muted small">なし</p>`}</section>`;
+    return html;
+  };
+
+  const txItem = (x) =>
+    `<li><span class="date">${esc(D.dayLabelLong(x.date))}</span>${catSwatch(x.categoryId)}<div class="grow"><div class="ellipsis">${esc(x.label || cat(x.categoryId).name)}</div>
+      <div class="meta">${esc(accName(x.accountId))}・${esc(cat(x.categoryId).name)}${x.recurrenceId ? "・定期の1回分" : ""}${x.balanceAlreadyReflected ? "・残高反映済み" : ""}</div></div>
+      <span class="amt">${signed(x.amount)}</span><span class="actions">
+      ${x.status === "planned" ? `<button class="small" data-action="tx-confirm" data-id="${esc(x.id)}">確定</button>` : ""}
+      <button class="small ghost" data-action="tx-edit" data-id="${esc(x.id)}">編集</button></span></li>`;
+
+  /* ---------- 画面: 分析 ---------- */
+
+  const analysisRange = (key) => {
+    const t = today();
+    const ms = `${t.slice(0, 7)}-01`;
+    switch (key) {
+      case "lastMonth": { const s = D.addMonths(ms, -1); return [s, D.endOfMonth(s)]; }
+      case "3months": return [D.addMonths(ms, -2), D.endOfMonth(t)];
+      case "payPeriod": {
+        // 前回の給料日〜次の給料日前日
+        const next = rangeEnd("payday", t);
+        const prev = K.nextPayday(state.settings, D.addDays(D.addMonths(next, -1), -3));
+        return [prev <= t ? prev : D.addMonths(next, -1), D.addDays(next, -1)];
+      }
+      case "year": return [`${t.slice(0, 4)}-01-01`, `${t.slice(0, 4)}-12-31`];
+      default: return [ms, D.endOfMonth(t)];
+    }
+  };
+
+  const viewAnalysis = () => {
+    const [start, end] = analysisRange(ui.analysisRange);
+    const sum = K.categorySummary(state, start, end, { today: today(), includePlanned: ui.includePlanned });
+    const days = D.diffDays(start, end) + 1;
+    const benchScale = days / (365.2425 / 12);
+    const max = Math.max(1, ...sum.groups.map((g) => g.total), ...sum.groups.map((g) => (Number(cat(g.categoryId).benchmark) || 0) * benchScale));
+
+    let html = `<section class="scroll-x" role="group" aria-label="期間">${[
+      ["thisMonth", "今月"], ["lastMonth", "先月"], ["payPeriod", "今回の給料期間"], ["3months", "3か月"], ["year", "今年"],
+    ].map(([k, l]) => `<button class="chip" aria-pressed="${ui.analysisRange === k}" data-action="arange" data-key="${k}">${l}</button>`).join("")}</section>`;
+    html += `<section class="row between wrap"><span class="small muted num">${esc(D.dayLabel(start))}〜${esc(D.dayLabel(end))}（${days}日）</span>
+      <label class="check small"><input type="checkbox" data-bind="includePlanned" ${ui.includePlanned ? "checked" : ""}> 今日以降の予定・日割りを含める</label></section>`;
+
+    html += `<section class="card"><div class="row between"><h3>カテゴリ別の支出</h3><b class="num">${esc(yen(sum.total))}</b></div>`;
+    if (!sum.groups.length) {
+      html += `<p class="muted small">この期間の支出はまだありません。${ui.includePlanned ? "" : "「予定・日割りを含める」をオンにすると予測分も集計します。"}</p>`;
+    } else {
+      const hasBench = sum.groups.some((g) => Number(cat(g.categoryId).benchmark) > 0);
+      if (hasBench || ui.includePlanned) {
+        html += `<div class="legend">${ui.includePlanned ? `<span><i style="border-top:8px solid var(--s1);width:12px"></i>実績</span><span><i style="border-top:8px solid color-mix(in srgb,var(--s1) 55%,var(--surface));width:12px"></i>予定・日割り</span>` : ""}${hasBench ? `<span><i style="border:0;border-left:2px solid var(--text);height:12px;width:2px"></i>比較基準（期間換算）</span>` : ""}</div>`;
+      }
+      html += `<div class="bars">`;
+      sum.groups.forEach((g) => {
+        const c = cat(g.categoryId);
+        const actual = g.items.filter((i) => i.kind === "actual").reduce((s, i) => s + i.amount, 0);
+        const bench = (Number(c.benchmark) || 0) * benchScale;
+        const open = ui.openCat === g.categoryId;
+        const pct = ((g.total / sum.total) * 100).toFixed(0);
+        html += `<button class="bar-row" data-action="cat-open" data-id="${esc(g.categoryId)}" aria-expanded="${open}" title="${esc(c.name)} ${esc(yen(g.total))}（${pct}%）${bench ? ` / 基準 ${esc(yen(bench))}` : ""}">
+          <span class="name">${catSwatch(g.categoryId)}<span class="ellipsis">${esc(c.name)}</span></span>
+          <span class="bar-track"><span class="bar-fill planned" style="width:${((g.total / max) * 100).toFixed(2)}%"></span><span class="bar-fill" style="width:${((actual / max) * 100).toFixed(2)}%;${actual ? "" : "display:none"}"></span>${bench ? `<span class="bar-bench" style="left:${((bench / max) * 100).toFixed(2)}%"></span>` : ""}</span>
+          <span class="val num">${esc(yen(g.total))}<span class="tiny" style="display:block;font-weight:400">${pct}%${bench ? `・基準${esc(C.shortYen(Math.round(bench)))}` : ""}</span></span></button>`;
+        if (open) {
+          html += `<div class="bar-detail"><ul class="list">${g.items
+            .map((i) => `<li><span class="date">${esc(D.dayLabel(i.date))}</span><div class="grow ellipsis small">${esc(i.label || c.name)}${i.kind === "planned" ? ' <span class="badge">予定</span>' : ""}</div><span class="amt num small">${esc(yen(i.amount))}</span></li>`)
+            .join("")}</ul></div>`;
+        }
+      });
+      html += `</div>`;
+    }
+    html += `<p class="tiny" style="margin:10px 0 0">バーをタップすると内訳を表示。比較基準は「メニュー › カテゴリ」で月額を設定できます（総務省「家計調査」の単身世帯・年代別の値などを参考に。寮費・実家暮らしで大きく違う住居費などは自分用に補正してください）。</p></section>`;
+    return html;
+  };
+
+  /* ---------- 画面: メニュー ---------- */
+
+  const MENU = [
+    ["accounts", "口座", "残高・振替の状況"],
+    ["recurrences", "定期の支払い・収入", "家賃・サブスク・後払い・給料"],
+    ["payslips", "給与明細", "残業の時給換算・次回の見込み"],
+    ["goals", "目標", "必要な月間貯金額"],
+    ["living", "生活費の設定", "平日・休日の単価、雑費枠"],
+    ["categories", "カテゴリ", "色・比較基準"],
+    ["settings", "設定・データ", "給料日・通知・バックアップ"],
+  ];
+
+  const viewMenu = () =>
+    `<section class="menu-grid">${MENU.map(([k, t, s]) => `<button data-sub-go="${k}"><b>${t}</b><span>${s}</span></button>`).join("")}</section>`;
+
+  const viewAccounts = () => {
+    let html = `<section class="row between"><h2 style="margin:0">口座</h2><button class="primary small" data-action="account-new">＋ 口座を追加</button></section>`;
+    if (!state.accounts.length) return html + needAccounts();
+    html += `<section class="card"><ul class="list">${state.accounts
+      .map((a) => `<li><div class="grow"><div class="ellipsis"><b>${esc(a.name)}</b> ${a.includeInTotal === false ? '<span class="badge">合計に含めない</span>' : ""}</div>
+        <div class="meta">${a.id === state.settings.salaryAccountId ? "給与の入金先・" : ""}${a.id === state.settings.livingAccountId ? "生活費の支払元・" : ""}${esc(a.note || "")}</div></div>
+        <span class="amt num">${esc(yen(a.balance))}</span><span class="actions"><button class="small" data-action="account-balance" data-id="${esc(a.id)}">残高更新</button><button class="small ghost" data-action="account-edit" data-id="${esc(a.id)}">編集</button></span></li>`)
+      .join("")}</ul>
+      <div class="row between" style="margin-top:8px"><span class="muted small">合計（対象口座）</span><b class="num">${esc(yen(K.sumBalances(state, K.totalAccountIds(state))))}</b></div></section>`;
+
+    const t = today();
+    const active = state.transfers.filter((x) => x.status !== "done").sort((a, b) => (a.date < b.date ? -1 : 1));
+    const done = state.transfers.filter((x) => x.status === "done").sort((a, b) => (a.date > b.date ? -1 : 1)).slice(0, 10);
+    const trItem = (x) => {
+      const overdue = K.IN_FLIGHT.includes(x.status) && x.date < t;
+      return `<li><span class="date">${esc(D.dayLabelLong(x.date))}</span><div class="grow"><div class="ellipsis">${esc(accName(x.fromId))} → ${esc(accName(x.toId))}</div>
+        <div class="meta">${esc(x.label || "")}${overdue ? ' <span class="badge warn">予定日超過</span>' : ""}</div></div>
+        <span class="amt num">${esc(yen(x.amount))}</span>
+        <span class="actions"><select data-action="transfer-status" data-id="${esc(x.id)}" aria-label="状態" style="width:auto;padding:4px 8px;font-size:14px">${Object.entries(K.TRANSFER_STATUS).map(([k, v]) => `<option value="${k}" ${k === x.status ? "selected" : ""}>${v}</option>`).join("")}</select>
+        <button class="small ghost danger" data-action="transfer-delete" data-id="${esc(x.id)}" aria-label="削除">×</button></span></li>`;
+    };
+    html += `<section class="card"><div class="row between"><h3>振替・出金の状況</h3><button class="small" data-action="go-transfer">＋ 振替</button></div>
+      <p class="tiny">予定 → 申請中 → 着金待ち → 着金済み。状態を変えると口座残高に自動で反映されます。</p>
+      ${active.length ? `<ul class="list">${active.map(trItem).join("")}</ul>` : `<p class="muted small">進行中の振替はありません</p>`}
+      ${done.length ? `<details style="margin-top:8px"><summary>着金済み（最近10件）</summary><ul class="list">${done.map(trItem).join("")}</ul></details>` : ""}</section>`;
+    return html;
+  };
+
+  const describeDays = (r) => {
+    const days = r.days.map((d) => (Number(d) >= 31 ? "末日" : `${d}日`)).join("・");
+    const every = Number(r.intervalMonths) > 1 ? `${r.intervalMonths}か月ごと` : "毎月";
+    const adj = r.adjust === "prev" ? "（休日は前営業日）" : r.adjust === "next" ? "（休日は翌営業日）" : "";
+    return `${every} ${days}${adj}`;
+  };
+
+  const viewRecurrences = () => {
+    let html = `<section class="row between"><h2 style="margin:0">定期の支払い・収入</h2><button class="primary small" data-action="rec-new">＋ 追加</button></section>`;
+    if (!state.accounts.length) return html + needAccounts();
+    if (!state.recurrences.length) return html + `<div class="card empty"><p>家賃・寮費、サブスク、後払い（PayPay・d払いなど）、給料を登録すると予測に反映されます。</p></div>`;
+    const groups = [
+      ["支出", state.recurrences.filter((r) => !r.toAccountId && r.amount < 0)],
+      ["収入", state.recurrences.filter((r) => !r.toAccountId && r.amount >= 0)],
+      ["口座間の振替", state.recurrences.filter((r) => r.toAccountId)],
+    ];
+    groups.forEach(([title, list]) => {
+      if (!list.length) return;
+      const monthly = list.reduce((s, r) => s + (r.amount * r.days.length) / (Number(r.intervalMonths) || 1), 0);
+      html += `<section class="card"><div class="row between"><h3>${title}</h3><span class="small muted">月あたり <b class="num" style="color:var(--text)">${esc(yen(Math.abs(monthly)))}</b></span></div><ul class="list">${list
+        .map((r) => `<li>${catSwatch(r.categoryId)}<div class="grow"><div class="ellipsis">${esc(r.label)}</div><div class="meta">${esc(describeDays(r))}・${esc(r.toAccountId ? `${accName(r.accountId)} → ${accName(r.toAccountId)}` : accName(r.accountId))}${r.endDate ? `・${esc(r.endDate)}まで` : ""}</div></div>
+          <span class="amt">${r.toAccountId ? `<span class="num">${esc(yen(Math.abs(r.amount)))}</span>` : signed(r.amount)}</span><span class="actions"><button class="small ghost" data-action="rec-edit" data-id="${esc(r.id)}">編集</button></span></li>`)
+        .join("")}</ul></section>`;
+    });
+    return html;
+  };
+
+  const viewPayslips = () => {
+    const slips = K.sortedPayslips(state);
+    const rate = K.overtimeRate(slips);
+    const hours = ui.draft.otHours ?? "";
+    const est = K.estimateNextPay(slips, Number(hours) || 0);
+    const payday = rangeEnd("payday");
+    let html = `<section class="row between"><h2 style="margin:0">給与明細</h2><button class="primary small" data-action="slip-new">＋ 明細を追加</button></section>`;
+    if (!slips.length) return html + `<div class="card empty"><p>支給額合計・控除額合計・残業時間・時間外手当を入れると、残業1時間あたりの手当と次回の手取り見込みを計算します。</p></div>`;
+
+    html += `<section class="tiles">
+      <div class="card tile"><div class="label">残業1時間あたり（平均）</div><div class="value num">${rate ? esc(yen(rate.average)) : "—"}</div><div class="sub">${rate ? `直近 ${esc(yen(rate.latest))}・${rate.samples}件から` : "残業時間と時間外手当を入力してください"}</div></div>
+      <div class="card tile"><div class="label">直近の差引支給額</div><div class="value num">${esc(yen(slips[slips.length - 1].net))}</div><div class="sub">${esc(slips[slips.length - 1].payDate)}</div></div>
+    </section>`;
+
+    html += `<section class="card"><h3>次回の給与見込み</h3>
+      <label class="field">次回の残業時間<input type="number" inputmode="decimal" min="0" step="0.5" data-bind="otHours" value="${esc(hours)}" placeholder="例: 20"></label>
+      ${est ? `<table class="data" style="margin-top:10px"><tbody>
+        <tr><td>基本部分（直近の支給額 − 時間外手当）</td><td class="r num">${esc(yen(est.baseGross))}</td></tr>
+        <tr><td>時間外手当（${esc(yen(est.rate))} × ${esc(String(Number(hours) || 0))}時間）</td><td class="r num">${esc(yen(est.overtimePay))}</td></tr>
+        <tr><td>支給額合計</td><td class="r num">${esc(yen(est.gross))}</td></tr>
+        <tr><td>控除額（控除率 ${(est.deductionRate * 100).toFixed(1)}%）</td><td class="r num">−${esc(yen(est.deductions))}</td></tr>
+        <tr><td><b>差引支給額（見込み）</b></td><td class="r num"><b>${esc(yen(est.net))}</b></td></tr></tbody></table>
+        <p class="tiny">控除率は直近の明細（${esc(est.basedOn)}）と同じと仮定しています。</p>
+        <button class="primary" data-action="slip-plan" data-amount="${est.net}" ${state.settings.salaryAccountId ? "" : "disabled"}>${esc(D.dayLabelLong(payday))}の給与予定として登録</button>
+        ${state.settings.salaryAccountId ? "" : `<p class="tiny">「設定」で給与の入金口座を選ぶと登録できます。</p>`}` : ""}
+    </section>`;
+
+    html += `<section class="card"><h3>履歴</h3><div class="table-wrap"><table class="data"><thead><tr><th>支給日</th><th class="r">支給額</th><th class="r">控除額</th><th class="r">差引支給額</th><th class="r">残業</th><th class="r">時給換算</th><th></th></tr></thead><tbody>${[...slips]
+      .reverse()
+      .map((p) => `<tr><td>${esc(p.payDate)}</td><td class="r num">${esc(yen(p.gross))}</td><td class="r num">${esc(yen(p.deductions))}</td><td class="r num"><b>${esc(yen(p.net))}</b></td>
+        <td class="r num">${p.overtimeHours ? `${esc(p.overtimeHours)}h` : "—"}</td><td class="r num">${p.overtimeHours && p.overtimePay ? esc(yen(p.overtimePay / p.overtimeHours)) : "—"}</td>
+        <td class="r"><button class="small ghost" data-action="slip-edit" data-id="${esc(p.id)}">編集</button></td></tr>`)
+      .join("")}</tbody></table></div></section>`;
+    return html;
+  };
+
+  const viewGoals = () => {
+    let html = `<section class="row between"><h2 style="margin:0">目標</h2><button class="primary small" data-action="goal-new">＋ 目標を追加</button></section>`;
+    if (!state.goals.length) return html + `<div class="card empty"><p>例：「30歳までに800万円」。期日と金額から必要な月間・年間の貯金額を逆算します。</p></div>`;
+    const t = today();
+    state.goals.forEach((g) => {
+      const p = K.goalPlan(state, g, { today: t });
+      const level = p.onTrack ? "good" : "warning";
+      html += `<section class="card"><div class="row between"><h3>${esc(g.label || "目標")}</h3><button class="small ghost" data-action="goal-edit" data-id="${esc(g.id)}">編集</button></div>
+        <p class="small muted" style="margin:0 0 8px">${esc(g.targetDate)}までに ${esc(yen(p.target))}（あと${p.years.toFixed(1)}年）</p>
+        <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p.progress * 100)}" aria-label="進捗"><div style="width:${(p.progress * 100).toFixed(1)}%"></div></div>
+        <div class="row between small" style="margin:4px 0 12px"><span class="num">現在 ${esc(yen(p.current))}</span><span class="num">${Math.round(p.progress * 100)}%</span></div>
+        <div class="tiles">
+          <div class="tile"><div class="label">必要な貯金額</div><div class="value num">${esc(yen(p.requiredMonthly))}<span class="small">/月</span></div><div class="sub num">年 ${esc(yen(p.requiredYearly))}</div></div>
+          <div class="tile"><div class="label">今のペース（${p.paceSource === "manual" ? "手入力" : "12か月予測"}）</div><div class="value num">${esc(yen(p.pace))}<span class="small">/月</span></div>
+            <div class="sub">${g.includeWindfall ? "臨時収入を含む" : `臨時収入を除外${p.windfallExcluded ? `（${esc(yen(p.windfallExcluded))}）` : ""}`}</div></div>
+          <div class="tile"><div class="label">このペースだと期日に</div><div class="value num">${esc(yen(p.projected))}</div></div>
+        </div>
+        ${alertBox(level, `<div>${p.onTrack ? "順調です" : `要調整：月あと <b class="num">${esc(yen(p.gapMonthly))}</b> 貯金を増やす必要があります`}</div>`)}
+        <p class="tiny" style="margin:0">必要額 = （目標金額 − 現在資産）÷ 残り期間。予測ペースは定期収支・生活費・予定から今後12か月の増減を出したもの（着金待ちは含めない）。</p></section>`;
+    });
+    return html;
+  };
+
+  const viewLiving = () => {
+    const s = state.settings;
+    const t = today();
+    const end = D.endOfMonth(t);
+    let wd = 0;
+    let off = 0;
+    for (let d = t; d <= end; d = D.addDays(d, 1)) D.isDayOff(d, s.extraHolidays) ? off++ : wd++;
+    const est = wd * (Number(s.weekdayCost) || 0) + off * (Number(s.holidayCost) || 0);
+    return `<section class="card"><form class="stack" data-form="living">
+      <label class="field">生活費を払う口座<select name="livingAccountId">${accountOptions(s.livingAccountId, { includeEmpty: true })}</select></label>
+      <div class="grid2"><label class="field">平日 1日あたり<input name="weekdayCost" inputmode="numeric" value="${esc(s.weekdayCost)}"></label>
+      <label class="field">休日 1日あたり<input name="holidayCost" inputmode="numeric" value="${esc(s.holidayCost)}"></label></div>
+      <label class="field">月の雑費枠（日用品・衣類など。日割りで計上）<input name="miscMonthly" inputmode="numeric" value="${esc(s.miscMonthly)}"></label>
+      <label class="check"><input type="checkbox" name="includeTodayLiving" ${s.includeTodayLiving ? "checked" : ""}> 今日の分も予測に含める</label>
+      <label class="field">会社の休み・連休（休日単価にする日。YYYY-MM-DD を改行かカンマ区切り）<textarea name="extraHolidays" rows="3" placeholder="2026-12-29&#10;2026-12-30">${esc((s.extraHolidays || []).join("\n"))}</textarea></label>
+      <button class="primary" type="submit">保存</button></form>
+      <p class="tiny">休日＝土日・祝日（振替休日・国民の休日を含む）＋上の日付。今月の残り: 平日${wd}日・休日${off}日 → 生活費 約${esc(yen(est))}</p></section>`;
+  };
+
+  const viewCategories = () =>
+    `<section class="row between"><h2 style="margin:0">カテゴリ</h2><button class="primary small" data-action="cat-new">＋ 追加</button></section>
+    ${["expense", "income"].map((kind) => `<section class="card"><h3>${kind === "expense" ? "支出" : "収入"}</h3><ul class="list">${state.categories
+      .filter((c) => c.kind === kind)
+      .map((c) => `<li>${catSwatch(c.id)}<div class="grow">${esc(c.name)}${c.id === K.WINDFALL ? ' <span class="badge">目標計算・確定申告チェックの対象</span>' : ""}<div class="meta">${Number(c.benchmark) ? `比較基準 ${esc(yen(c.benchmark))}/月` : ""}</div></div>
+        <button class="small ghost" data-action="cat-edit" data-id="${esc(c.id)}">編集</button></li>`)
+      .join("")}</ul></section>`).join("")}`;
+
+  const viewSettings = () => {
+    const s = state.settings;
+    const notifySupported = "Notification" in window;
+    return `<section class="card"><form class="stack" data-form="settings">
+      <div class="grid2"><label class="field">給料日<input name="payday" type="number" min="1" max="31" value="${esc(s.payday)}"></label>
+      <label class="field">給料日が休日のとき<select name="paydayAdjust"><option value="prev" ${s.paydayAdjust === "prev" ? "selected" : ""}>前営業日</option><option value="next" ${s.paydayAdjust === "next" ? "selected" : ""}>翌営業日</option><option value="none" ${s.paydayAdjust === "none" ? "selected" : ""}>そのまま</option></select></label></div>
+      <label class="field">給与の入金口座<select name="salaryAccountId">${accountOptions(s.salaryAccountId, { includeEmpty: true })}</select></label>
+      <label class="field">残高アラートの目安（これを下回る予測で警告）<input name="threshold" inputmode="numeric" value="${esc(s.threshold)}"></label>
+      <label class="field">確定申告チェックの目安（臨時収入の年間合計）<input name="taxThreshold" inputmode="numeric" value="${esc(s.taxThreshold)}"></label>
+      <label class="check"><input type="checkbox" name="notify" ${s.notify ? "checked" : ""} ${notifySupported ? "" : "disabled"}> アプリを開いたときに警告を通知する${notifySupported ? "" : "（このブラウザは非対応）"}</label>
+      <button class="primary" type="submit">保存</button></form></section>
+      <section class="card"><h3>データ</h3><p class="tiny">データはこの端末のブラウザ内にだけ保存されます。機種変更やブラウザのデータ削除に備えて、ときどき書き出してください。</p>
+      <div class="row wrap"><button data-action="export">JSONを書き出す</button><label class="btn" style="display:inline-flex;align-items:center">JSONを読み込む<input type="file" accept="application/json,.json" data-action="import" hidden></label>
+      <button data-action="sample">サンプルデータを読み込む</button><button class="danger" data-action="reset">すべて削除</button></div></section>`;
+  };
+
+  const SUB = {
+    accounts: ["口座", viewAccounts],
+    recurrences: ["定期の支払い・収入", viewRecurrences],
+    payslips: ["給与明細", viewPayslips],
+    goals: ["目標", viewGoals],
+    living: ["生活費の設定", viewLiving],
+    categories: ["カテゴリ", viewCategories],
+    settings: ["設定・データ", viewSettings],
+  };
+  const TABS = { home: ["ホーム", viewHome], forecast: ["残高予測", viewForecast], input: ["入力", viewInput], analysis: ["カテゴリ分析", viewAnalysis], menu: ["メニュー", viewMenu] };
+
+  /* ---------- 描画 ---------- */
+
+  const render = () => {
+    const sub = ui.tab === "menu" && ui.sub && SUB[ui.sub];
+    const [title, view] = sub || TABS[ui.tab] || TABS.home;
+    $("#pageTitle").textContent = title;
+    $("#backBtn").hidden = !sub;
+    document.querySelectorAll("nav.tabs button").forEach((b) => {
+      if (b.dataset.tab === ui.tab) b.setAttribute("aria-current", "page");
+      else b.removeAttribute("aria-current");
+    });
+    app.innerHTML = view();
+    drawCharts();
+    saveUi();
+  };
+
+  const drawCharts = () => {
+    const home = $("#homeChart");
+    if (home && state.accounts.length) {
+      const t = today();
+      const f = K.forecast(state, { today: t, end: rangeEnd("payday", t), scenario: "pessimistic" });
+      C.lineChart(home, {
+        dates: f.days.map((d) => d.date),
+        series: [{ name: "残高", values: f.days.map((d) => d.balance), cls: "s1" }],
+        threshold: Number(state.settings.threshold) || 0,
+        dayOff: f.days.map((d) => d.dayOff),
+        compact: true,
+        ariaLabel: `給料日までの残高推移。最低 ${yen(f.min.balance)}（${D.dayLabel(f.min.date)}）`,
+        onSelect: (i) => {
+          ui.tab = "forecast";
+          ui.range = "payday";
+          ui.selectedDate = f.days[i].date;
+          render();
+        },
+      });
+    }
+    const fc = $("#forecastChart");
+    if (fc) {
+      const { main, compare, names } = forecastData();
+      const series = [{ name: names[0], values: main.days.map((d) => d.balance), cls: "s1" }];
+      if (compare) series.push({ name: names[1], values: compare.days.map((d) => d.balance), cls: "s2" });
+      const selIdx = main.days.findIndex((d) => d.date === ui.selectedDate);
+      C.lineChart(fc, {
+        dates: main.days.map((d) => d.date),
+        series,
+        threshold: Number(state.settings.threshold) || 0,
+        dayOff: main.days.map((d) => d.dayOff),
+        selected: selIdx >= 0 ? selIdx : null,
+        ariaLabel: `残高推移。最低 ${yen(main.min.balance)}（${D.dayLabel(main.min.date)}）。左右キーで日付を移動`,
+        onSelect: (i) => {
+          ui.selectedDate = main.days[i].date;
+          $("#dayDetail").innerHTML = dayDetail(main);
+        },
+      });
+    }
+  };
+
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(drawCharts, 150);
+  });
+
+  /* ---------- シート（編集ダイアログ） ---------- */
+
+  const sheet = $("#sheet");
+  let sheetSubmit = null;
+
+  const openSheet = (title, body, onSubmit) => {
+    $("#sheetTitle").textContent = title;
+    $("#sheetBody").innerHTML = body;
+    sheetSubmit = onSubmit;
+    if (typeof sheet.showModal === "function") sheet.showModal();
+    else sheet.setAttribute("open", "");
+    const first = $("#sheetBody input:not([type=checkbox]):not([type=hidden]), #sheetBody select");
+    if (first) first.focus();
+  };
+  const closeSheet = () => {
+    if (typeof sheet.close === "function") sheet.close();
+    else sheet.removeAttribute("open");
+    sheetSubmit = null;
+  };
+  $("#sheetClose").addEventListener("click", closeSheet);
+  $("#sheetForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const submitter = e.submitter;
+    if (submitter && submitter.dataset.sheetAction) {
+      const fn = sheetActions[submitter.dataset.sheetAction];
+      if (fn && fn() !== false) closeSheet();
+      return;
+    }
+    if (sheetSubmit && sheetSubmit(new FormData(e.target)) !== false) closeSheet();
+  });
+  let sheetActions = {};
+
+  const money = (v) => {
+    const n = Number(String(v ?? "").replace(/[,，円¥\s]/g, "").replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)));
+    return Number.isFinite(n) ? Math.round(n) : NaN;
+  };
+
+  const foot = (del) =>
+    `<div class="sheet-foot">${del ? `<button type="submit" class="danger ghost" data-sheet-action="delete" formnovalidate style="margin-right:auto">削除</button>` : ""}<button type="submit" class="primary">保存</button></div>`;
+
+  const accountSheet = (a) => {
+    sheetActions = { delete: () => {
+      if (!confirm(`「${a.name}」を削除しますか？この口座に紐付いた定期ルール・予定は残ります。`)) return false;
+      state.accounts = state.accounts.filter((x) => x.id !== a.id);
+      commit();
+    } };
+    openSheet(a ? "口座を編集" : "口座を追加", `<div class="stack" style="display:grid;gap:14px">
+      <label class="field">名前<input name="name" value="${esc(a ? a.name : "")}" placeholder="例: 広島銀行、Olive、FX口座、PayPay残高" required></label>
+      ${a ? "" : `<label class="field">現在の残高<input name="balance" inputmode="numeric" required placeholder="0"></label>`}
+      <label class="check"><input type="checkbox" name="includeInTotal" ${!a || a.includeInTotal !== false ? "checked" : ""}> 総資産・残高予測の合計に含める</label>
+      <p class="tiny" style="margin:0">PayPay残高など「銀行残高に影響しない支払い」は、別口座として登録して合計から外し、その支払いをこの口座に紐付けます。</p>
+      <label class="field">メモ<input name="note" value="${esc(a ? a.note || "" : "")}"></label>${foot(!!a)}</div>`, (fd) => {
+      const name = fd.get("name").trim();
+      if (!name) return false;
+      if (a) {
+        Object.assign(a, { name, includeInTotal: fd.get("includeInTotal") === "on", note: fd.get("note") });
+      } else {
+        const balance = money(fd.get("balance"));
+        if (Number.isNaN(balance)) return toast("残高を数字で入力してください"), false;
+        const acc = { id: K.uid("acc"), name, balance, includeInTotal: fd.get("includeInTotal") === "on", note: fd.get("note") };
+        state.accounts.push(acc);
+        if (!state.settings.salaryAccountId) state.settings.salaryAccountId = acc.id;
+        else if (!state.settings.livingAccountId && acc.includeInTotal) state.settings.livingAccountId = acc.id;
+      }
+      commit();
+    });
+  };
+
+  const balanceSheet = (a) => {
+    sheetActions = {};
+    openSheet(`${a.name} の残高を更新`, `<div style="display:grid;gap:14px">
+      <p class="small muted" style="margin:0">銀行アプリなどで確認した今の残高を入力してください。差額は「残高調整」として記録されます。</p>
+      <label class="field">現在の残高<input class="amount num" name="balance" inputmode="numeric" value="${esc(a.balance)}" required></label>
+      <label class="check"><input type="checkbox" name="log" checked> 差額を実績として記録する</label>${foot(false)}</div>`, (fd) => {
+      const b = money(fd.get("balance"));
+      if (Number.isNaN(b)) return toast("数字で入力してください"), false;
+      const diff = b - Math.round(a.balance || 0);
+      if (diff && fd.get("log") === "on") {
+        K.addTransaction(state, { accountId: a.id, date: today(), amount: diff, categoryId: diff < 0 ? "cat_other" : "cat_other", label: "残高調整", status: "actual", balanceAlreadyReflected: true, adjustment: true });
+      }
+      a.balance = b;
+      commit();
+      toast(`残高を${yen(b)}に更新しました`);
+    });
+  };
+
+  const txSheet = (x) => {
+    const kind = x.amount < 0 ? "expense" : "income";
+    sheetActions = { delete: () => {
+      K.removeTransaction(state, x.id);
+      commit();
+    } };
+    openSheet("取引を編集", `<div style="display:grid;gap:14px">
+      <div class="grid2"><label class="field">種類<select name="kind"><option value="expense" ${kind === "expense" ? "selected" : ""}>支出</option><option value="income" ${kind === "income" ? "selected" : ""}>収入</option></select></label>
+      <label class="field">金額<input name="amount" inputmode="numeric" value="${Math.abs(x.amount)}" required></label></div>
+      <div class="grid2"><label class="field">日付<input type="date" name="date" value="${esc(x.date)}" required></label>
+      <label class="field">状態<select name="status"><option value="actual" ${x.status === "actual" ? "selected" : ""}>実績</option><option value="planned" ${x.status === "planned" ? "selected" : ""}>予定</option></select></label></div>
+      <label class="field">口座<select name="accountId">${accountOptions(x.accountId)}</select></label>
+      <label class="field">カテゴリ<select name="categoryId">${categoryOptions(null, x.categoryId)}</select></label>
+      <label class="field">内容<input name="label" value="${esc(x.label)}"></label>
+      ${x.balanceAlreadyReflected ? `<p class="tiny" style="margin:0">この取引は「残高反映済み」として記録されているため、編集・削除しても口座残高は変わりません。</p>` : `<p class="tiny" style="margin:0">実績の編集・削除は口座残高にも反映されます。</p>`}
+      ${foot(true)}</div>`, (fd) => {
+      const amt = money(fd.get("amount"));
+      if (Number.isNaN(amt)) return toast("金額を数字で入力してください"), false;
+      K.updateTransaction(state, x.id, {
+        amount: fd.get("kind") === "expense" ? -Math.abs(amt) : Math.abs(amt),
+        date: fd.get("date"),
+        status: fd.get("status"),
+        accountId: fd.get("accountId"),
+        categoryId: fd.get("categoryId"),
+        label: fd.get("label"),
+      });
+      commit();
+    });
+  };
+
+  const recSheet = (r) => {
+    const kind = r && r.toAccountId ? "transfer" : r && r.amount > 0 ? "income" : "expense";
+    sheetActions = { delete: () => {
+      if (!confirm(`「${r.label}」を削除しますか？`)) return false;
+      state.recurrences = state.recurrences.filter((x) => x.id !== r.id);
+      commit();
+    } };
+    const daysText = r ? r.days.map((d) => (Number(d) >= 31 ? "末" : d)).join(", ") : "";
+    openSheet(r ? "定期ルールを編集" : "定期ルールを追加", `<div style="display:grid;gap:14px">
+      <label class="field">名前<input name="label" value="${esc(r ? r.label : "")}" placeholder="例: 寮費、YouTube Premium、PayPay後払い、給料" required></label>
+      <div class="grid2"><label class="field">種類<select name="kind"><option value="expense" ${kind === "expense" ? "selected" : ""}>支出</option><option value="income" ${kind === "income" ? "selected" : ""}>収入</option><option value="transfer" ${kind === "transfer" ? "selected" : ""}>口座間の振替</option></select></label>
+      <label class="field">金額（1回あたり）<input name="amount" inputmode="numeric" value="${r ? Math.abs(r.amount) : ""}" required></label></div>
+      <div class="grid2"><label class="field">日（複数はカンマ区切り、末日は「末」）<input name="days" value="${esc(daysText)}" placeholder="例: 27 または 5, 20" required></label>
+      <label class="field">周期<select name="intervalMonths">${[1, 2, 3, 6, 12].map((m) => `<option value="${m}" ${Number(r ? r.intervalMonths || 1 : 1) === m ? "selected" : ""}>${m === 1 ? "毎月" : `${m}か月ごと`}</option>`).join("")}</select></label></div>
+      <label class="field">休日の場合<select name="adjust"><option value="none" ${r && r.adjust === "none" ? "selected" : ""}>そのまま</option><option value="next" ${!r || r.adjust === "next" ? "selected" : ""}>翌営業日（引き落としに多い）</option><option value="prev" ${r && r.adjust === "prev" ? "selected" : ""}>前営業日（給料に多い）</option></select></label>
+      <div class="grid2"><label class="field">口座（振替は出金元）<select name="accountId">${accountOptions(r ? r.accountId : state.settings.salaryAccountId)}</select></label>
+      <label class="field">カテゴリ（振替は不要）<select name="categoryId">${categoryOptions(null, r ? r.categoryId : "cat_bnpl")}</select></label></div>
+      <label class="field">振替の入金先（種類が「口座間の振替」のとき）<select name="toAccountId">${accountOptions(r ? r.toAccountId : state.settings.livingAccountId, { includeEmpty: true })}</select></label>
+      <div class="grid2"><label class="field">開始日（隔月の起点）<input type="date" name="startDate" value="${esc(r ? r.startDate || "" : today())}"></label>
+      <label class="field">終了日（任意）<input type="date" name="endDate" value="${esc(r ? r.endDate || "" : "")}"></label></div>
+      <p class="tiny" style="margin:0">後払いのように毎回金額が違うものは、ホームの「これからの予定」の「変更」でその回だけ金額を上書きできます。</p>
+      ${foot(!!r)}</div>`, (fd) => {
+      const amt = money(fd.get("amount"));
+      const days = String(fd.get("days"))
+        .split(/[,、，\s]+/)
+        .filter(Boolean)
+        .map((d) => (/^末/.test(d) ? 31 : Number(d.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)))))
+        .filter((d) => d >= 1 && d <= 31);
+      if (Number.isNaN(amt) || !days.length) return toast("金額と日付を確認してください"), false;
+      const isTransfer = fd.get("kind") === "transfer";
+      if (isTransfer && (!fd.get("toAccountId") || fd.get("toAccountId") === fd.get("accountId"))) return toast("振替の入金先を出金元と別の口座にしてください"), false;
+      const data = {
+        label: fd.get("label"),
+        toAccountId: isTransfer ? fd.get("toAccountId") : "",
+        amount: fd.get("kind") === "income" ? Math.abs(amt) : -Math.abs(amt),
+        days: [...new Set(days)].sort((a, b) => a - b),
+        intervalMonths: Number(fd.get("intervalMonths")) || 1,
+        adjust: fd.get("adjust"),
+        accountId: fd.get("accountId"),
+        categoryId: fd.get("categoryId"),
+        startDate: fd.get("startDate") || "",
+        endDate: fd.get("endDate") || "",
+      };
+      if (r) Object.assign(r, data);
+      else state.recurrences.push(Object.assign({ id: K.uid("rec"), doneDates: [] }, data));
+      commit();
+    });
+  };
+
+  const occurrenceSheet = (r, original) => {
+    const existing = (r.toAccountId ? state.transfers : state.transactions).find((t) => t.recurrenceId === r.id && t.occurrenceDate === original);
+    sheetActions = {
+      skip: () => {
+        if (existing) (r.toAccountId ? K.removeTransfer : K.removeTransaction)(state, existing.id);
+        K.skipOccurrence(state, r.id, original);
+        commit();
+        toast("今回分をスキップしました");
+      },
+      reflected: () => {
+        K.completeOccurrence(state, r.id, original, { reflect: false });
+        commit();
+      },
+    };
+    openSheet(`${r.label}（${D.dayLabel(original)}分）`, `<div style="display:grid;gap:14px">
+      <label class="field">今回の金額<input class="amount num" name="amount" inputmode="numeric" value="${Math.abs(existing ? existing.amount : r.amount)}" required></label>
+      <label class="field">日付<input type="date" name="date" value="${esc(existing ? existing.date : D.adjustBusinessDay(original, r.adjust))}" required></label>
+      <p class="tiny" style="margin:0">この回だけの変更です。定期ルールそのものは変わりません。</p>
+      <div class="sheet-foot" style="flex-wrap:wrap"><button type="submit" class="ghost" data-sheet-action="skip" formnovalidate>今回はなし</button>
+      <button type="submit" class="ghost" data-sheet-action="reflected" formnovalidate title="銀行残高を手入力で更新済みの場合">済（残高は更新済み）</button>
+      <button type="submit" class="primary">この金額で予定する</button></div></div>`, (fd) => {
+      const amt = money(fd.get("amount"));
+      if (Number.isNaN(amt)) return false;
+      K.overrideOccurrence(state, r.id, original, { amount: r.amount < 0 ? -Math.abs(amt) : Math.abs(amt), date: fd.get("date") });
+      commit();
+    });
+  };
+
+  const slipSheet = (p) => {
+    sheetActions = { delete: () => {
+      state.payslips = state.payslips.filter((x) => x.id !== p.id);
+      commit();
+    } };
+    openSheet(p ? "給与明細を編集" : "給与明細を追加", `<div style="display:grid;gap:14px">
+      <label class="field">支給日<input type="date" name="payDate" value="${esc(p ? p.payDate : K.nextPayday(state.settings, `${today().slice(0, 7)}-01`))}" required></label>
+      <div class="grid2"><label class="field">支給額合計<input name="gross" inputmode="numeric" value="${esc(p ? p.gross : "")}" required></label>
+      <label class="field">控除額合計<input name="deductions" inputmode="numeric" value="${esc(p ? p.deductions : "")}" required></label></div>
+      <p class="tiny" style="margin:0">差引支給額 = 支給額合計 − 控除額合計（自動計算）</p>
+      <div class="grid2"><label class="field">残業時間<input name="overtimeHours" type="number" step="0.25" min="0" inputmode="decimal" value="${esc(p ? p.overtimeHours || "" : "")}"></label>
+      <label class="field">時間外手当<input name="overtimePay" inputmode="numeric" value="${esc(p ? p.overtimePay || "" : "")}"></label></div>
+      <label class="field">メモ<input name="memo" value="${esc(p ? p.memo || "" : "")}"></label>
+      ${p ? "" : `<label class="check"><input type="checkbox" name="record" ${state.settings.salaryAccountId ? "checked" : ""}> 差引支給額を給与の入金口座に実績として記録する</label>`}
+      ${foot(!!p)}</div>`, (fd) => {
+      const gross = money(fd.get("gross"));
+      const deductions = money(fd.get("deductions"));
+      if (Number.isNaN(gross) || Number.isNaN(deductions)) return toast("金額を数字で入力してください"), false;
+      const data = {
+        payDate: fd.get("payDate"),
+        gross,
+        deductions,
+        net: gross - deductions,
+        overtimeHours: Number(fd.get("overtimeHours")) || 0,
+        overtimePay: money(fd.get("overtimePay")) || 0,
+        memo: fd.get("memo"),
+      };
+      if (p) Object.assign(p, data);
+      else {
+        state.payslips.push(Object.assign({ id: K.uid("slip") }, data));
+        if (fd.get("record") === "on" && state.settings.salaryAccountId) {
+          // 同じ日の給与の定期ルール・予定があれば置き換える
+          const salaryRec = state.recurrences.find((r) => r.categoryId === "cat_salary" && r.accountId === state.settings.salaryAccountId && r.amount > 0);
+          const occ = salaryRec && K.expandRecurrence(salaryRec, D.addDays(data.payDate, -5), D.addDays(data.payDate, 5))[0];
+          const planned = state.transactions.find((t) => t.status === "planned" && t.categoryId === "cat_salary" && Math.abs(D.diffDays(t.date, data.payDate)) <= 5);
+          if (planned) K.updateTransaction(state, planned.id, { status: "actual", amount: data.net, date: data.payDate });
+          else if (occ) K.overrideOccurrence(state, salaryRec.id, occ.original, { status: "actual", amount: data.net, date: data.payDate });
+          else K.addTransaction(state, { accountId: state.settings.salaryAccountId, date: data.payDate, amount: data.net, categoryId: "cat_salary", label: "給与", status: "actual" });
+        }
+      }
+      commit();
+    });
+  };
+
+  const goalSheet = (g) => {
+    sheetActions = { delete: () => {
+      state.goals = state.goals.filter((x) => x.id !== g.id);
+      commit();
+    } };
+    const ids = g ? g.accountIds || [] : [];
+    openSheet(g ? "目標を編集" : "目標を追加", `<div style="display:grid;gap:14px">
+      <label class="field">目標名<input name="label" value="${esc(g ? g.label : "")}" placeholder="例: 30歳までに800万円" required></label>
+      <div class="grid2"><label class="field">目標金額<input name="targetAmount" inputmode="numeric" value="${esc(g ? g.targetAmount : "")}" placeholder="8000000" required></label>
+      <label class="field">期日<input type="date" name="targetDate" value="${esc(g ? g.targetDate : "")}" required></label></div>
+      <label class="check"><input type="checkbox" name="includeWindfall" ${g && g.includeWindfall ? "checked" : ""}> 臨時収入（FXの利益など）もペースに含める</label>
+      <fieldset style="border:1px solid var(--border);border-radius:10px;padding:10px 12px"><legend class="small muted">対象の口座（未選択なら合計対象の口座すべて）</legend>
+      ${state.accounts.map((a) => `<label class="check"><input type="checkbox" name="acc" value="${esc(a.id)}" ${ids.includes(a.id) ? "checked" : ""}> ${esc(a.name)}</label>`).join("")}</fieldset>
+      <label class="field">月の貯金ペースを手入力（空欄なら予測から自動）<input name="manual" inputmode="numeric" value="${esc(g && g.manualMonthlyPace !== null && g.manualMonthlyPace !== undefined ? g.manualMonthlyPace : "")}"></label>
+      ${foot(!!g)}</div>`, (fd) => {
+      const target = money(fd.get("targetAmount"));
+      if (Number.isNaN(target) || !fd.get("targetDate")) return false;
+      const manualRaw = String(fd.get("manual") || "").trim();
+      const data = {
+        label: fd.get("label"),
+        targetAmount: target,
+        targetDate: fd.get("targetDate"),
+        includeWindfall: fd.get("includeWindfall") === "on",
+        accountIds: fd.getAll("acc"),
+        manualMonthlyPace: manualRaw === "" ? null : money(manualRaw),
+      };
+      if (g) Object.assign(g, data);
+      else state.goals.push(Object.assign({ id: K.uid("goal") }, data));
+      commit();
+    });
+  };
+
+  const catSheet = (c) => {
+    const builtin = c && c.id.startsWith("cat_");
+    sheetActions = { delete: () => {
+      if (builtin) return toast("標準のカテゴリは削除できません"), false;
+      state.categories = state.categories.filter((x) => x.id !== c.id);
+      commit();
+    } };
+    openSheet(c ? "カテゴリを編集" : "カテゴリを追加", `<div style="display:grid;gap:14px">
+      <label class="field">名前<input name="name" value="${esc(c ? c.name : "")}" required></label>
+      <div class="grid2"><label class="field">種類<select name="kind" ${builtin ? "disabled" : ""}><option value="expense" ${!c || c.kind === "expense" ? "selected" : ""}>支出</option><option value="income" ${c && c.kind === "income" ? "selected" : ""}>収入</option></select></label>
+      <label class="field">色<input type="color" name="color" value="${esc(c ? c.color : "#2a78d6")}" style="height:42px;padding:4px"></label></div>
+      <label class="field">比較基準（月額・任意）<input name="benchmark" inputmode="numeric" value="${esc(c && c.benchmark ? c.benchmark : "")}" placeholder="例: 家計調査の同年代・単身世帯の値"></label>
+      ${foot(!!c && !builtin)}</div>`, (fd) => {
+      const bench = String(fd.get("benchmark") || "").trim();
+      const data = { name: fd.get("name"), color: fd.get("color"), benchmark: bench ? money(bench) : null };
+      if (!builtin) data.kind = fd.get("kind");
+      if (c) Object.assign(c, data);
+      else state.categories.push(Object.assign({ id: K.uid("c") }, data));
+      commit();
+    });
+  };
+
+  /* ---------- サンプルデータ ---------- */
+
+  const sampleState = () => {
+    const s = K.emptyState();
+    const t = today();
+    const acc = (name, balance, includeInTotal = true, note = "") => {
+      const a = { id: K.uid("acc"), name, balance, includeInTotal, note };
+      s.accounts.push(a);
+      return a.id;
+    };
+    const bank = acc("給料口座（銀行）", 182000, true, "給与の入金・引き落とし");
+    const life = acc("生活費口座", 24000, true, "デビットで日々の買い物");
+    const fx = acc("FX口座", 130000, true);
+    const pp = acc("PayPay残高", 3200, false, "PayPay残高払いはここから");
+    Object.assign(s.settings, {
+      salaryAccountId: bank, livingAccountId: life, weekdayCost: 1000, holidayCost: 2500, miscMonthly: 8000,
+      threshold: 20000, payday: 25, paydayAdjust: "prev",
+    });
+    const rec = (label, amount, days, accountId, categoryId, adjust = "next") =>
+      s.recurrences.push({ id: K.uid("rec"), label, amount, days, accountId, categoryId, adjust, intervalMonths: 1, startDate: "2026-01-01", endDate: "", doneDates: [] });
+    rec("給料", 205000, [25], bank, "cat_salary", "prev");
+    rec("寮費", -18000, [27], bank, "cat_housing");
+    rec("スマホ代", -3300, [26], bank, "cat_telecom");
+    rec("YouTube Premium", -1280, [10], bank, "cat_subsc", "none");
+    rec("PayPayあと払い", -9000, [27], bank, "cat_bnpl");
+    rec("d払い", -6000, [10], bank, "cat_bnpl");
+    rec("キャシャカリ", -5000, [5, 20], bank, "cat_bnpl");
+    rec("生活費口座へ振替", -40000, [26], bank, "cat_other", "next");
+    s.recurrences[s.recurrences.length - 1].toAccountId = life;
+    rec("PayPayチャージ分の支払い", -1500, [15], pp, "cat_subsc", "none");
+    const tx = (daysFromToday, amount, label, categoryId, accountId, status) =>
+      K.addTransaction(s, { accountId, date: D.addDays(t, daysFromToday), amount, label, categoryId, status });
+    tx(-12, -3200, "日用品", "cat_misc", life, "actual");
+    tx(-9, -1800, "外食", "cat_living", life, "actual");
+    tx(-6, -4500, "衣類", "cat_misc", life, "actual");
+    tx(-3, 18000, "FXリベート", K.WINDFALL, fx, "actual");
+    tx(-2, -2980, "Claude課金", "cat_subsc", bank, "actual");
+    tx(20, -38000, "退去費", "cat_extra", bank, "planned");
+    tx(45, -25000, "旅行代", "cat_extra", bank, "planned");
+    K.addTransfer(s, { fromId: fx, toId: bank, amount: 50000, date: D.addDays(t, 3), status: "pending", label: "FX出金" });
+    s.goals.push({ id: K.uid("goal"), label: "30歳までに800万円", targetAmount: 8000000, targetDate: `${Number(t.slice(0, 4)) + 4}-03-31`, includeWindfall: false, accountIds: [], manualMonthlyPace: null });
+    const firstOf = (n) => `${D.addMonths(t, n).slice(0, 7)}-01`;
+    const lastPay = K.nextPayday(s.settings, firstOf(-1));
+    const prevPay = K.nextPayday(s.settings, firstOf(-2));
+    s.payslips.push({ id: K.uid("slip"), payDate: prevPay, gross: 262000, deductions: 55000, net: 207000, overtimeHours: 18, overtimePay: 36900, memo: "" });
+    s.payslips.push({ id: K.uid("slip"), payDate: lastPay, gross: 271000, deductions: 57000, net: 214000, overtimeHours: 22, overtimePay: 45100, memo: "" });
+    s.categories.find((c) => c.id === "cat_telecom").benchmark = 5000;
+    s.categories.find((c) => c.id === "cat_misc").benchmark = 10000;
+    return s;
+  };
+
+  /* ---------- イベント ---------- */
+
+  const actions = {
+    range: (b) => { ui.range = b.dataset.key; ui.selectedDate = null; render(); },
+    scenario: (b) => { ui.scenario = b.dataset.key; render(); },
+    "toggle-table": () => { ui.showTable = !ui.showTable; render(); },
+    kind: (b) => { ui.inputKind = b.dataset.key; ui.draft = {}; render(); },
+    arange: (b) => { ui.analysisRange = b.dataset.key; ui.openCat = null; render(); },
+    "cat-open": (b) => { ui.openCat = ui.openCat === b.dataset.id ? null : b.dataset.id; render(); },
+    template: (b) => {
+      const r = state.recurrences.find((x) => x.id === b.dataset.id);
+      ui.draft = { amount: Math.abs(r.amount), categoryId: r.categoryId, accountId: r.accountId, label: r.label };
+      render();
+    },
+    "go-transfer": () => { ui.tab = "input"; ui.sub = null; ui.inputKind = "transfer"; render(); },
+    "account-new": () => accountSheet(null),
+    "account-edit": (b) => accountSheet(K.accountById(state, b.dataset.id)),
+    "account-balance": (b) => balanceSheet(K.accountById(state, b.dataset.id)),
+    "transfer-delete": (b) => {
+      if (!confirm("この振替を削除しますか？口座残高への反映も取り消されます。")) return;
+      K.removeTransfer(state, b.dataset.id);
+      commit();
+    },
+    "tx-edit": (b) => txSheet(state.transactions.find((x) => x.id === b.dataset.id)),
+    "tx-confirm": (b) => {
+      K.confirmTransaction(state, b.dataset.id);
+      commit();
+      toast("確定して残高に反映しました");
+    },
+    "occ-done": (b) => {
+      K.completeOccurrence(state, b.dataset.id, b.dataset.date);
+      commit();
+      toast("残高に反映しました");
+    },
+    "occ-edit": (b) => occurrenceSheet(state.recurrences.find((x) => x.id === b.dataset.id), b.dataset.date),
+    "rec-new": () => recSheet(null),
+    "rec-edit": (b) => recSheet(state.recurrences.find((x) => x.id === b.dataset.id)),
+    "slip-new": () => slipSheet(null),
+    "slip-edit": (b) => slipSheet(state.payslips.find((x) => x.id === b.dataset.id)),
+    "slip-plan": (b) => {
+      const amount = Number(b.dataset.amount);
+      const payday = rangeEnd("payday");
+      const salaryRec = state.recurrences.find((r) => r.categoryId === "cat_salary" && r.accountId === state.settings.salaryAccountId && r.amount > 0);
+      const occ = salaryRec && K.expandRecurrence(salaryRec, D.addDays(payday, -5), D.addDays(payday, 5)).find((o) => !salaryRec.doneDates.includes(o.original));
+      if (occ) K.overrideOccurrence(state, salaryRec.id, occ.original, { amount, date: payday });
+      else K.addTransaction(state, { accountId: state.settings.salaryAccountId, date: payday, amount, categoryId: "cat_salary", label: "給与（見込み）", status: "planned" });
+      commit();
+      toast(`${D.dayLabel(payday)}の給与を${yen(amount)}で予定しました`);
+    },
+    "goal-new": () => goalSheet(null),
+    "goal-edit": (b) => goalSheet(state.goals.find((x) => x.id === b.dataset.id)),
+    "cat-new": () => catSheet(null),
+    "cat-edit": (b) => catSheet(K.categoryById(state, b.dataset.id)),
+    "whatif-remove": (b) => { ui.whatIf = ui.whatIf.filter((w) => w.id !== b.dataset.id); render(); },
+    "whatif-save": (b) => {
+      const w = ui.whatIf.find((x) => x.id === b.dataset.id);
+      K.addTransaction(state, { accountId: w.accountId, date: w.date, amount: w.amount, label: w.label, categoryId: w.amount < 0 ? "cat_extra" : K.WINDFALL, status: w.date > today() ? "planned" : "actual" });
+      ui.whatIf = ui.whatIf.filter((x) => x.id !== w.id);
+      commit();
+      toast("予定として保存しました");
+    },
+    export: () => {
+      const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `kakeibo-${today()}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    },
+    sample: () => {
+      if (state.accounts.length && !confirm("今のデータをサンプルデータで置き換えますか？")) return;
+      state = sampleState();
+      ui.tab = "home";
+      ui.sub = null;
+      commit();
+      toast("サンプルデータを読み込みました");
+    },
+    reset: () => {
+      if (!confirm("すべてのデータを削除します。よろしいですか？")) return;
+      state = K.emptyState();
+      commit();
+    },
+  };
+
+  document.addEventListener("click", (e) => {
+    const tab = e.target.closest("[data-tab]");
+    if (tab) {
+      ui.tab = tab.dataset.tab;
+      ui.sub = null;
+      ui.draft = {};
+      render();
+      window.scrollTo(0, 0);
+      return;
+    }
+    const go = e.target.closest("[data-tab-go]");
+    if (go) {
+      ui.tab = go.dataset.tabGo;
+      ui.sub = null;
+      render();
+      window.scrollTo(0, 0);
+      return;
+    }
+    const sub = e.target.closest("[data-sub-go]");
+    if (sub) {
+      ui.tab = "menu";
+      ui.sub = sub.dataset.subGo;
+      render();
+      window.scrollTo(0, 0);
+      return;
+    }
+    const b = e.target.closest("button[data-action]");
+    if (b && actions[b.dataset.action]) actions[b.dataset.action](b);
+  });
+
+  $("#backBtn").addEventListener("click", () => {
+    ui.sub = null;
+    render();
+  });
+
+  document.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.dataset.action === "transfer-status") {
+      K.setTransferStatus(state, t.dataset.id, t.value);
+      commit();
+      toast(`状態を「${K.TRANSFER_STATUS[t.value]}」にしました`);
+      return;
+    }
+    if (t.dataset.action === "import" && t.files[0]) {
+      t.files[0].text().then((text) => {
+        try {
+          const data = K.normalizeState(JSON.parse(text));
+          if (!confirm("読み込んだデータで今のデータを置き換えますか？")) return;
+          state = data;
+          commit();
+          toast("読み込みました");
+        } catch (err) {
+          toast("JSONを読み込めませんでした");
+        }
+      });
+      return;
+    }
+    const bind = t.dataset.bind;
+    if (!bind) {
+      if (t.name === "categoryId" && t.type === "radio") {
+        t.closest(".chips").querySelectorAll("label").forEach((l) => (l.style.borderColor = l.contains(t) ? "var(--accent)" : ""));
+      }
+      return;
+    }
+    if (bind === "includePlanned") ui.includePlanned = t.checked;
+    else if (bind === "otHours") ui.draft.otHours = t.value;
+    else ui[bind] = t.value;
+    if (bind === "scope") ui.selectedDate = null;
+    render();
+  });
+
+  document.addEventListener("submit", (e) => {
+    const form = e.target;
+    const kind = form.dataset.form;
+    if (!kind) return;
+    e.preventDefault();
+    const fd = new FormData(form);
+    const t = today();
+    if (kind === "tx") {
+      const amt = money(fd.get("amount"));
+      if (Number.isNaN(amt) || amt <= 0) return toast("金額を入力してください");
+      const date = fd.get("date");
+      const planned = fd.get("planned") === "on" || date > t;
+      K.addTransaction(state, {
+        accountId: fd.get("accountId"),
+        date,
+        amount: ui.inputKind === "expense" ? -amt : amt,
+        categoryId: fd.get("categoryId") || "cat_other",
+        label: fd.get("label"),
+        status: planned ? "planned" : "actual",
+        balanceAlreadyReflected: !planned && fd.get("reflected") === "on",
+      });
+      ui.draft = {};
+      commit();
+      toast(planned ? "予定を登録しました" : "登録して残高に反映しました");
+    } else if (kind === "transfer") {
+      const amt = money(fd.get("amount"));
+      if (Number.isNaN(amt) || amt <= 0) return toast("金額を入力してください");
+      if (fd.get("fromId") === fd.get("toId")) return toast("出金元と入金先が同じです");
+      K.addTransfer(state, { fromId: fd.get("fromId"), toId: fd.get("toId"), amount: amt, date: fd.get("date"), status: fd.get("status"), label: fd.get("label") });
+      commit();
+      toast("振替を登録しました");
+    } else if (kind === "whatif") {
+      const amt = money(fd.get("amount"));
+      if (Number.isNaN(amt) || amt <= 0) return toast("金額を入力してください");
+      ui.whatIf.push({ id: K.uid("wi"), date: fd.get("date"), amount: fd.get("income") === "on" ? amt : -amt, label: fd.get("label"), accountId: fd.get("accountId") });
+      render();
+    } else if (kind === "living") {
+      Object.assign(state.settings, {
+        livingAccountId: fd.get("livingAccountId"),
+        weekdayCost: money(fd.get("weekdayCost")) || 0,
+        holidayCost: money(fd.get("holidayCost")) || 0,
+        miscMonthly: money(fd.get("miscMonthly")) || 0,
+        includeTodayLiving: fd.get("includeTodayLiving") === "on",
+        extraHolidays: String(fd.get("extraHolidays") || "").split(/[\s,、]+/).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+      });
+      commit();
+      toast("保存しました");
+    } else if (kind === "settings") {
+      const notify = fd.get("notify") === "on";
+      Object.assign(state.settings, {
+        payday: Math.min(31, Math.max(1, Number(fd.get("payday")) || 25)),
+        paydayAdjust: fd.get("paydayAdjust"),
+        salaryAccountId: fd.get("salaryAccountId"),
+        threshold: money(fd.get("threshold")) || 0,
+        taxThreshold: money(fd.get("taxThreshold")) || 200000,
+        notify,
+      });
+      if (notify && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
+      commit();
+      toast("保存しました");
+    }
+  });
+
+  /* ---------- 通知（開いたときに1日1回） ---------- */
+
+  const notifyOnOpen = () => {
+    if (!state.settings.notify || !("Notification" in window) || Notification.permission !== "granted") return;
+    const key = "kakeibo.notified";
+    let last = "";
+    try { last = localStorage.getItem(key) || ""; } catch (e) { /* noop */ }
+    if (last === today()) return;
+    const list = K.alerts(state).filter((a) => a.level !== "info");
+    if (!list.length) return;
+    try {
+      new Notification("家計簿の警告", { body: list.map((a) => a.message).join("\n") });
+      localStorage.setItem(key, today());
+    } catch (e) { /* 一部ブラウザはページからの通知に非対応 */ }
+  };
+
+  render();
+  notifyOnOpen();
+})();
