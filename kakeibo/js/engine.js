@@ -111,22 +111,31 @@
     return t;
   };
 
-  const confirmTransaction = (state, id, { reflect = true } = {}) =>
-    updateTransaction(state, id, { status: "actual", balanceAlreadyReflected: !reflect, confirmedFrom: "planned" });
-
-  // 「確定」「済」を取り消して予定に戻す（口座残高も元に戻る）
-  const canUnconfirm = (t) => !!t && t.status === "actual" && (t.confirmedFrom === "planned" || !!t.fromOccurrence);
-
-  const unconfirmTransaction = (state, id) => {
+  // 予定を「支払済／入金済」にする。today を渡すと、未来日付の予定は今日の日付で計上する（元の日付は plannedDate に残す）
+  const confirmTransaction = (state, id, { reflect = true, today } = {}) => {
     const t = state.transactions.find((x) => x.id === id);
-    if (!canUnconfirm(t)) return null;
+    if (!t) return null;
+    const patch = { status: "actual", balanceAlreadyReflected: !reflect, confirmedFrom: "planned" };
+    if (today && t.date > today) Object.assign(patch, { plannedDate: t.date, date: today });
+    return updateTransaction(state, id, patch);
+  };
+
+  // 「支払済」「済」を取り消して予定に戻す（口座残高も元に戻る）。未来日付の実績も予定に戻せる
+  const canUnconfirm = (t, today) =>
+    !!t && t.status === "actual" && !t.adjustment &&
+    (t.confirmedFrom === "planned" || !!t.fromOccurrence || (!!today && t.date > today));
+
+  const unconfirmTransaction = (state, id, today) => {
+    const t = state.transactions.find((x) => x.id === id);
+    if (!canUnconfirm(t, today)) return null;
     if (t.fromOccurrence) {
       // 定期ルールの「済」で作られた取引は削除すれば、その回が予定として復活する
       removeTransaction(state, id);
       return null;
     }
-    const u = updateTransaction(state, id, { status: "planned", balanceAlreadyReflected: false });
+    const u = updateTransaction(state, id, Object.assign({ status: "planned", balanceAlreadyReflected: false }, t.plannedDate ? { date: t.plannedDate } : {}));
     delete u.confirmedFrom;
+    delete u.plannedDate;
     return u;
   };
 
@@ -393,10 +402,10 @@
     state.accounts.forEach((a) => (balances[a.id] = Math.round(a.balance || 0)));
     const startBalance = sumBalances(state, ids);
 
-    // 今日すでに記録した実績は残高に反映済み。予測には足さず、表示用に今日の行へ付ける
-    const actualsToday = state.transactions.filter(
-      (t) => t.status === "actual" && t.date === today && !t.adjustment && ids.includes(t.accountId)
-    );
+    // 今日（と未来日付）で記録済みの実績は残高に反映済み。予測には足さず、表示用に今日の行へ付ける
+    const actualsToday = state.transactions
+      .filter((t) => t.status === "actual" && t.date >= today && !t.adjustment && ids.includes(t.accountId))
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
 
     const days = [];
     let i = 0;

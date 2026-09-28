@@ -227,3 +227,28 @@ test("今日の実績は予測に二重計上せず、今日の行に表示用�
   assert.deepEqual(f.days[0].actuals.map((t) => t.label), ["今日の臨時"]);
   assert.equal(f.days[1].actuals.length, 0);
 });
+
+test("未来日付の予定を支払済にすると今日の日付で計上、予定に戻すと元の日付に戻る", () => {
+  const s = setup();
+  const t = K.addTransaction(s, { accountId: "bank", date: "2026-09-30", amount: -25916, categoryId: "cat_extra", label: "臨時", status: "planned" });
+  K.confirmTransaction(s, t.id, { today: "2026-09-28" });
+  assert.equal(t.date, "2026-09-28");
+  assert.equal(K.accountById(s, "bank").balance, 74084);
+  K.unconfirmTransaction(s, t.id, "2026-09-28");
+  assert.equal(t.date, "2026-09-30");
+  assert.equal(t.status, "planned");
+  assert.equal(K.accountById(s, "bank").balance, 100000);
+});
+
+test("未来日付の実績（旧データ）：今日の行に表示され、予定に戻せる", () => {
+  const s = setup();
+  const t = K.addTransaction(s, { accountId: "bank", date: "2026-09-30", amount: -25916, categoryId: "cat_extra", label: "臨時", status: "actual" });
+  const f = K.forecast(s, { today: "2026-09-28", end: "2026-10-05" });
+  assert.deepEqual(f.days[0].actuals.map((x) => x.label), ["臨時"]);
+  assert.equal(f.startBalance, 144084);
+  assert.equal(K.canUnconfirm(t, "2026-09-28"), true);
+  K.unconfirmTransaction(s, t.id, "2026-09-28");
+  const g = K.forecast(s, { today: "2026-09-28", end: "2026-10-05" });
+  assert.equal(g.days[2].events[0].amount, -25916);
+  assert.equal(g.days[2].balance, 144084);
+});

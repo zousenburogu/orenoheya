@@ -216,17 +216,17 @@
     html += `<section class="card"><h3>これからの予定（7日間）</h3>${upcomingList(t, D.addDays(t, 7))}</section>`;
 
     const recentConfirmed = state.transactions
-      .filter((x) => K.canUnconfirm(x) && x.date >= D.addDays(t, -7))
+      .filter((x) => K.canUnconfirm(x, t) && x.date >= D.addDays(t, -7))
       .sort((a, b) => (a.date > b.date ? -1 : 1))
       .slice(0, 5);
     if (recentConfirmed.length) {
-      html += `<section class="card"><h3>最近の確定・済</h3><p class="tiny">間違えて押したときは「予定に戻す」で取り消せます（口座残高も元に戻ります）。</p>
+      html += `<section class="card"><h3>最近の支払済・入金済</h3><p class="tiny">間違えて押したときは「予定に戻す」で取り消せます（口座残高も元に戻ります）。</p>
         <ul class="list">${recentConfirmed.map(txItem).join("")}</ul></section>`;
     }
 
     const overdue = state.transactions.filter((x) => x.status === "planned" && x.date < t);
     if (overdue.length) {
-      html += `<section class="card"><h3>確認待ちの予定</h3><p class="tiny">日付を過ぎた予定です。実際に支払った／入金されたら「確定」してください。予測では今日の出来事として計上しています。</p>
+      html += `<section class="card"><h3>確認待ちの予定</h3><p class="tiny">日付を過ぎた予定です。実際に支払った／入金されたら「支払済」「入金済」を押してください。予測では今日の出来事として計上しています。</p>
         <ul class="list">${overdue.map(txItem).join("")}</ul></section>`;
     }
     return html;
@@ -258,7 +258,7 @@
           e.source === "recurrence"
             ? `<button class="small" data-action="occ-done" data-id="${esc(e.refId)}" data-date="${esc(e.original)}" title="残高に反映して完了">済</button>
                <button class="small ghost" data-action="occ-edit" data-id="${esc(e.refId)}" data-date="${esc(e.original)}">変更</button>`
-            : `<button class="small" data-action="tx-confirm" data-id="${esc(e.refId)}">確定</button>`;
+            : `<button class="small" data-action="tx-confirm" data-id="${esc(e.refId)}">${e.amount < 0 ? "支払済" : "入金済"}</button>`;
         return `<li><span class="date">${esc(D.dayLabelLong(e.date))}</span>${catSwatch(e.categoryId)}<div class="grow"><div class="ellipsis">${esc(e.label)}</div><div class="meta">${esc(e.meta || `${accName(e.accountId)}${e.source === "recurrence" ? "・定期" : "・予定"}`)}</div></div>
           <span class="amt">${recTransfer ? `<span class="num">${esc(yen(Math.abs(e.amount)))}</span>` : signed(e.amount)}</span><span class="actions">${actions}</span></li>`;
       })
@@ -353,7 +353,7 @@
     const hol = D.holidayName(date);
     const actuals = day.actuals || [];
     const actualList = actuals.length
-      ? `<p class="tiny" style="margin:8px 0 0">今日記録した実績（残高に反映済み）</p><ul class="list">${actuals.map(actualRow).join("")}</ul>`
+      ? `<p class="tiny" style="margin:8px 0 0">記録済みの実績（今日の残高に反映済み）</p><ul class="list">${actuals.map(actualRow).join("")}</ul>`
       : "";
     return `<div class="row between"><h3>${esc(D.dayLabelLong(date))}${hol ? ` <span class="badge">${esc(hol)}</span>` : day.dayOff ? ` <span class="badge">休日</span>` : ""}${date === f.min.date ? ` <span class="badge accent">最低残高の日</span>` : ""}</h3>
       <span class="num small muted">${idx > 0 ? `${esc(yen(prev))} → ` : ""}<b style="color:var(--text)">${esc(yen(day.balance))}</b></span></div>
@@ -361,7 +361,8 @@
   };
 
   const actualRow = (x) =>
-    `<li>${catSwatch(x.categoryId)}<div class="grow"><div class="ellipsis">${esc(x.label || cat(x.categoryId).name)}</div><div class="meta">${esc(accName(x.accountId))}・実績（反映済み）</div></div><span class="amt">${signed(x.amount)}</span></li>`;
+    `<li>${catSwatch(x.categoryId)}<div class="grow"><div class="ellipsis">${esc(x.label || cat(x.categoryId).name)}</div><div class="meta">${esc(accName(x.accountId))}・実績（反映済み）${x.date > today() ? `・日付は${esc(D.dayLabel(x.date))}` : ""}</div></div><span class="amt">${signed(x.amount)}</span>
+      ${K.canUnconfirm(x, today()) ? `<span class="actions"><button class="small" data-action="tx-unconfirm" data-id="${esc(x.id)}">予定に戻す</button></span>` : ""}</li>`;
 
   const forecastTable = (f) => {
     const rows = f.days
@@ -382,7 +383,7 @@
             return true;
           });
         const daily = d.events.filter((e) => e.source === "living" || e.source === "misc").reduce((s, e) => s + e.amount, 0);
-        return `<tr><td>${esc(D.dayLabelLong(d.date))}</td><td>${(d.actuals || []).map((x) => `<div class="ev-line"><span>${esc(x.label || cat(x.categoryId).name)} <span class="badge">実績</span></span>${signed(x.amount)}</div>`).join("")}${main.map((e) => `<div class="ev-line"><span>${esc(e.label)}${e.internal ? ' <span class="badge">振替</span>' : ""}</span>${e.internal ? `<span class="num">${esc(yen(Math.abs(e.amount)))}</span>` : signed(e.amount)}</div>`).join("") || ((d.actuals || []).length ? "" : "—")}</td><td class="r">${daily ? signed(daily) : "—"}</td><td class="r num"><b>${esc(yen(d.balance))}</b></td></tr>`;
+        return `<tr><td>${esc(D.dayLabelLong(d.date))}</td><td>${(d.actuals || []).map((x) => `<div class="ev-line"><span>${esc(x.label || cat(x.categoryId).name)} <span class="badge">実績${x.date > d.date ? `・${esc(D.dayLabel(x.date))}付` : ""}</span></span>${signed(x.amount)}</div>`).join("")}${main.map((e) => `<div class="ev-line"><span>${esc(e.label)}${e.internal ? ' <span class="badge">振替</span>' : ""}</span>${e.internal ? `<span class="num">${esc(yen(Math.abs(e.amount)))}</span>` : signed(e.amount)}</div>`).join("") || ((d.actuals || []).length ? "" : "—")}</td><td class="r">${daily ? signed(daily) : "—"}</td><td class="r num"><b>${esc(yen(d.balance))}</b></td></tr>`;
       })
       .join("");
     return `<p class="tiny">入出金がある日のみ表示（生活費・雑費の日割りはまとめて表示）。「実績」は今日すでに記録した分で、今日の残高に反映済みです。過去の実績は「分析」や「入力」の履歴で確認できます。</p><div class="table-wrap"><table class="data"><thead><tr><th>日付</th><th>入出金</th><th class="r">生活費等</th><th class="r">残高</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -441,8 +442,8 @@
     `<li><span class="date">${esc(D.dayLabelLong(x.date))}</span>${catSwatch(x.categoryId)}<div class="grow"><div class="ellipsis">${esc(x.label || cat(x.categoryId).name)}</div>
       <div class="meta">${esc(accName(x.accountId))}・${esc(cat(x.categoryId).name)}${x.recurrenceId ? "・定期の1回分" : ""}${x.balanceAlreadyReflected ? "・残高反映済み" : ""}</div></div>
       <span class="amt">${signed(x.amount)}</span><span class="actions">
-      ${x.status === "planned" ? `<button class="small" data-action="tx-confirm" data-id="${esc(x.id)}">確定</button>` : ""}
-      ${K.canUnconfirm(x) ? `<button class="small" data-action="tx-unconfirm" data-id="${esc(x.id)}">予定に戻す</button>` : ""}
+      ${x.status === "planned" ? `<button class="small" data-action="tx-confirm" data-id="${esc(x.id)}">${x.amount < 0 ? "支払済" : "入金済"}</button>` : ""}
+      ${K.canUnconfirm(x, today()) ? `<button class="small" data-action="tx-unconfirm" data-id="${esc(x.id)}">予定に戻す</button>` : ""}
       <button class="small ghost" data-action="tx-edit" data-id="${esc(x.id)}">編集</button></span></li>`;
 
   /* ---------- 画面: 分析 ---------- */
@@ -1119,11 +1120,18 @@
       commit();
     },
     "tx-edit": (b) => txSheet(state.transactions.find((x) => x.id === b.dataset.id)),
-    "tx-confirm": (b) => undoable("確定して残高に反映しました", () => K.confirmTransaction(state, b.dataset.id)),
+    "tx-confirm": (b) => {
+      const x = state.transactions.find((t) => t.id === b.dataset.id);
+      if (!x) return;
+      const t = today();
+      const word = x.amount < 0 ? "支払い" : "入金";
+      if (x.date > t && !confirm(`${D.dayLabelLong(x.date)}の予定ですが、もう${word}済みですか？\n\n「OK」で今日の日付の実績として残高に反映します。\n金額が決まっただけなら「キャンセル」して「編集」で金額を直してください（予定のまま残ります）。`)) return;
+      undoable(`${word}済みにして残高に反映しました`, () => K.confirmTransaction(state, x.id, { today: t }));
+    },
     "tx-unconfirm": (b) => {
       const x = state.transactions.find((t) => t.id === b.dataset.id);
       if (!x) return;
-      undoable(`「${x.label || cat(x.categoryId).name}」を予定に戻しました`, () => K.unconfirmTransaction(state, x.id));
+      undoable(`「${x.label || cat(x.categoryId).name}」を予定に戻しました`, () => K.unconfirmTransaction(state, x.id, today()));
     },
     "occ-done": (b) => undoable("残高に反映しました", () => K.completeOccurrence(state, b.dataset.id, b.dataset.date)),
     "occ-edit": (b) => occurrenceSheet(state.recurrences.find((x) => x.id === b.dataset.id), b.dataset.date),
