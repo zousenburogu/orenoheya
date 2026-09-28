@@ -351,21 +351,41 @@
     const prev = idx > 0 ? f.days[idx - 1].balance : f.startBalance;
     const net = day.events.reduce((s, e) => s + e.amount, 0);
     const hol = D.holidayName(date);
+    const actuals = day.actuals || [];
+    const actualList = actuals.length
+      ? `<p class="tiny" style="margin:8px 0 0">今日記録した実績（残高に反映済み）</p><ul class="list">${actuals.map(actualRow).join("")}</ul>`
+      : "";
     return `<div class="row between"><h3>${esc(D.dayLabelLong(date))}${hol ? ` <span class="badge">${esc(hol)}</span>` : day.dayOff ? ` <span class="badge">休日</span>` : ""}${date === f.min.date ? ` <span class="badge accent">最低残高の日</span>` : ""}</h3>
       <span class="num small muted">${idx > 0 ? `${esc(yen(prev))} → ` : ""}<b style="color:var(--text)">${esc(yen(day.balance))}</b></span></div>
-      ${day.events.length ? `<ul class="list">${day.events.map(eventRow).join("")}</ul><div class="row between small" style="margin-top:6px"><span class="muted">この日の増減</span>${signed(net)}</div>` : `<p class="muted small">入出金はありません</p>`}`;
+      ${day.events.length ? `<ul class="list">${day.events.map(eventRow).join("")}</ul><div class="row between small" style="margin-top:6px"><span class="muted">この日の増減</span>${signed(net)}</div>` : `${actuals.length ? "" : '<p class="muted small">入出金はありません</p>'}`}${actualList}`;
   };
+
+  const actualRow = (x) =>
+    `<li>${catSwatch(x.categoryId)}<div class="grow"><div class="ellipsis">${esc(x.label || cat(x.categoryId).name)}</div><div class="meta">${esc(accName(x.accountId))}・実績（反映済み）</div></div><span class="amt">${signed(x.amount)}</span></li>`;
 
   const forecastTable = (f) => {
     const rows = f.days
-      .filter((d) => d.events.some((e) => e.source !== "living" && e.source !== "misc") || d.date === f.min.date || d === f.days[f.days.length - 1])
+      .filter((d) => d.events.some((e) => e.source !== "living" && e.source !== "misc") || (d.actuals || []).length || d === f.days[0] || d.date === f.min.date || d === f.days[f.days.length - 1])
       .map((d) => {
-        const main = d.events.filter((e) => e.source !== "living" && e.source !== "misc");
+        // 対象内の口座同士の振替は出金・入金の2行ではなく1行にまとめる
+        const seenTransfer = new Set();
+        const main = d.events
+          .filter((e) => e.source !== "living" && e.source !== "misc")
+          .filter((e) => {
+            if (!e.transfer) return true;
+            const pair = d.events.some((o) => o !== e && o.transfer && o.refId === e.refId && o.original === e.original && Math.sign(o.amount) !== Math.sign(e.amount));
+            if (!pair) return true;
+            const key = `${e.refId}|${e.original || ""}`;
+            if (seenTransfer.has(key)) return false;
+            seenTransfer.add(key);
+            e.internal = true;
+            return true;
+          });
         const daily = d.events.filter((e) => e.source === "living" || e.source === "misc").reduce((s, e) => s + e.amount, 0);
-        return `<tr><td>${esc(D.dayLabelLong(d.date))}</td><td>${main.map((e) => `<div class="ev-line"><span>${esc(e.label)}</span>${signed(e.amount)}</div>`).join("") || "—"}</td><td class="r">${daily ? signed(daily) : "—"}</td><td class="r num"><b>${esc(yen(d.balance))}</b></td></tr>`;
+        return `<tr><td>${esc(D.dayLabelLong(d.date))}</td><td>${(d.actuals || []).map((x) => `<div class="ev-line"><span>${esc(x.label || cat(x.categoryId).name)} <span class="badge">実績</span></span>${signed(x.amount)}</div>`).join("")}${main.map((e) => `<div class="ev-line"><span>${esc(e.label)}${e.internal ? ' <span class="badge">振替</span>' : ""}</span>${e.internal ? `<span class="num">${esc(yen(Math.abs(e.amount)))}</span>` : signed(e.amount)}</div>`).join("") || ((d.actuals || []).length ? "" : "—")}</td><td class="r">${daily ? signed(daily) : "—"}</td><td class="r num"><b>${esc(yen(d.balance))}</b></td></tr>`;
       })
       .join("");
-    return `<p class="tiny">入出金がある日のみ表示（生活費・雑費の日割りはまとめて表示）</p><div class="table-wrap"><table class="data"><thead><tr><th>日付</th><th>入出金</th><th class="r">生活費等</th><th class="r">残高</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<p class="tiny">入出金がある日のみ表示（生活費・雑費の日割りはまとめて表示）。「実績」は今日すでに記録した分で、今日の残高に反映済みです。過去の実績は「分析」や「入力」の履歴で確認できます。</p><div class="table-wrap"><table class="data"><thead><tr><th>日付</th><th>入出金</th><th class="r">生活費等</th><th class="r">残高</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   };
 
   /* ---------- 画面: 入力 ---------- */

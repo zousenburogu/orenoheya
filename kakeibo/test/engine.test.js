@@ -216,3 +216,14 @@ test("定期の『済』の取り消し：その回が予定として復活", ()
   assert.equal(s.transactions.length, 0);
   assert.equal(K.forecast(s, { today: "2026-09-28", end: "2026-09-29" }).events.length, 1);
 });
+
+test("今日の実績は予測に二重計上せず、今日の行に表示用として付く", () => {
+  const s = setup();
+  K.addTransaction(s, { accountId: "bank", date: "2026-09-28", amount: -7777, categoryId: "cat_extra", label: "今日の臨時" });
+  K.addTransaction(s, { accountId: "paypay", date: "2026-09-28", amount: -500, categoryId: "cat_extra", label: "合計外" });
+  const f = K.forecast(s, { today: "2026-09-28", end: "2026-09-30" });
+  assert.equal(f.startBalance, 162223);
+  assert.equal(f.days[0].balance, 162223);
+  assert.deepEqual(f.days[0].actuals.map((t) => t.label), ["今日の臨時"]);
+  assert.equal(f.days[1].actuals.length, 0);
+});

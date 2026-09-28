@@ -393,6 +393,11 @@
     state.accounts.forEach((a) => (balances[a.id] = Math.round(a.balance || 0)));
     const startBalance = sumBalances(state, ids);
 
+    // 今日すでに記録した実績は残高に反映済み。予測には足さず、表示用に今日の行へ付ける
+    const actualsToday = state.transactions.filter(
+      (t) => t.status === "actual" && t.date === today && !t.adjustment && ids.includes(t.accountId)
+    );
+
     const days = [];
     let i = 0;
     for (let d = start; d <= end; d = D.addDays(d, 1)) {
@@ -411,6 +416,7 @@
         events: dayEvents,
         dayOff: D.isDayOff(d, state.settings.extraHolidays || []),
         holiday: D.holidayName(d),
+        actuals: d === today ? actualsToday : [],
       });
     }
 

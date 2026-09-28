@@ -179,6 +179,11 @@ h3 { font-size: 15px; margin: 0 0 6px; }
   .tile .value { font-size: 20px; }
 }
 .ev-line { display: flex; justify-content: space-between; gap: 8px; }
+.ev-line > .num { white-space: nowrap; }
+@media (max-width: 480px) {
+  table.data { font-size: 12px; }
+  table.data th, table.data td { padding: 6px 4px; }
+}
 .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; display: inline-block; }
 
 .badge {
