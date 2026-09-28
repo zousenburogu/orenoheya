@@ -112,7 +112,23 @@
   };
 
   const confirmTransaction = (state, id, { reflect = true } = {}) =>
-    updateTransaction(state, id, { status: "actual", balanceAlreadyReflected: !reflect });
+    updateTransaction(state, id, { status: "actual", balanceAlreadyReflected: !reflect, confirmedFrom: "planned" });
+
+  // 「確定」「済」を取り消して予定に戻す（口座残高も元に戻る）
+  const canUnconfirm = (t) => !!t && t.status === "actual" && (t.confirmedFrom === "planned" || !!t.fromOccurrence);
+
+  const unconfirmTransaction = (state, id) => {
+    const t = state.transactions.find((x) => x.id === id);
+    if (!canUnconfirm(t)) return null;
+    if (t.fromOccurrence) {
+      // 定期ルールの「済」で作られた取引は削除すれば、その回が予定として復活する
+      removeTransaction(state, id);
+      return null;
+    }
+    const u = updateTransaction(state, id, { status: "planned", balanceAlreadyReflected: false });
+    delete u.confirmedFrom;
+    return u;
+  };
 
   // 定期ルールの1回分を「済」にする。reflect=false は「残高はすでに手入力で更新済み」
   const completeOccurrence = (state, recurrenceId, date, { reflect = true } = {}) => {
@@ -140,6 +156,7 @@
       recurrenceId: r.id,
       occurrenceDate: date,
       balanceAlreadyReflected: !reflect,
+      fromOccurrence: true,
     });
   };
 
@@ -578,6 +595,7 @@
     defaultCategories, emptyState, normalizeState,
     accountById, categoryById, totalAccountIds, sumBalances,
     addTransaction, removeTransaction, updateTransaction, confirmTransaction, completeOccurrence,
+    canUnconfirm, unconfirmTransaction,
     overrideOccurrence, skipOccurrence,
     addTransfer, removeTransfer, setTransferStatus,
     expandRecurrence, nextPayday, collectEvents, forecast, hasInFlightInScope, resolveScope,

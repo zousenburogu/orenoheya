@@ -187,3 +187,32 @@ test("確定申告アラート：臨時収入が年20万円超", () => {
   K.addTransaction(s, { accountId: "fx", date: "2026-08-01", amount: 60000, categoryId: K.WINDFALL, label: "リベート" });
   assert.ok(K.alerts(s, { today: "2026-09-25" }).some((a) => a.kind === "tax" && a.level === "warning"));
 });
+
+test("確定の取り消し：予定に戻り、残高も元に戻る", () => {
+  const s = setup();
+  const t = K.addTransaction(s, { accountId: "bank", date: "2026-09-30", amount: -38000, categoryId: "cat_extra", label: "退去費", status: "planned" });
+  K.confirmTransaction(s, t.id);
+  assert.equal(K.accountById(s, "bank").balance, 62000);
+  K.unconfirmTransaction(s, t.id);
+  assert.equal(K.accountById(s, "bank").balance, 100000);
+  assert.equal(s.transactions[0].status, "planned");
+  assert.equal(K.canUnconfirm(s.transactions[0]), false);
+  // 「残高は更新済み」で確定した場合も残高は動かない
+  K.confirmTransaction(s, t.id, { reflect: false });
+  K.unconfirmTransaction(s, t.id);
+  assert.equal(K.accountById(s, "bank").balance, 100000);
+  // 手入力の実績は取り消し対象外（編集・削除で対応）
+  const a = K.addTransaction(s, { accountId: "bank", date: "2026-09-28", amount: -500, label: "コーヒー" });
+  assert.equal(K.canUnconfirm(a), false);
+});
+
+test("定期の『済』の取り消し：その回が予定として復活", () => {
+  const s = setup();
+  s.recurrences.push({ id: "yt", label: "YouTube", amount: -1280, days: [28], accountId: "bank", categoryId: "cat_subsc", adjust: "none", doneDates: [] });
+  const t = K.completeOccurrence(s, "yt", "2026-09-28");
+  assert.equal(K.accountById(s, "bank").balance, 98720);
+  K.unconfirmTransaction(s, t.id);
+  assert.equal(K.accountById(s, "bank").balance, 100000);
+  assert.equal(s.transactions.length, 0);
+  assert.equal(K.forecast(s, { today: "2026-09-28", end: "2026-09-29" }).events.length, 1);
+});

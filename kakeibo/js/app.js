@@ -67,6 +67,18 @@
     render();
   };
 
+  // 操作前の状態を覚えておき、トーストの「元に戻す」で丸ごと復元する
+  const undoable = (msg, fn) => {
+    const before = JSON.stringify(state);
+    fn();
+    commit();
+    toast(msg, () => {
+      state = K.normalizeState(JSON.parse(before));
+      commit();
+      toast("元に戻しました");
+    });
+  };
+
   /* ---------- 小物 ---------- */
 
   const esc = (s) =>
@@ -76,13 +88,28 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const app = $("#app");
 
-  const toast = (msg) => {
+  // undo を渡すと「元に戻す」ボタン付きで少し長めに表示する
+  const toast = (msg, undo) => {
+    document.querySelectorAll(".toast").forEach((x) => x.remove());
     const t = document.createElement("div");
     t.className = "toast";
     t.setAttribute("role", "status");
-    t.textContent = msg;
+    const text = document.createElement("span");
+    text.textContent = msg;
+    t.appendChild(text);
+    if (undo) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "toast-undo";
+      b.textContent = "元に戻す";
+      b.addEventListener("click", () => {
+        t.remove();
+        undo();
+      });
+      t.appendChild(b);
+    }
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), 2600);
+    setTimeout(() => t.remove(), undo ? 7000 : 2600);
   };
 
   const signed = (n) => `<span class="num ${n > 0 ? "pos" : "neg"}">${n > 0 ? "+" : ""}${esc(yen(n))}</span>`;
@@ -187,6 +214,15 @@
     }
 
     html += `<section class="card"><h3>これからの予定（7日間）</h3>${upcomingList(t, D.addDays(t, 7))}</section>`;
+
+    const recentConfirmed = state.transactions
+      .filter((x) => K.canUnconfirm(x) && x.date >= D.addDays(t, -7))
+      .sort((a, b) => (a.date > b.date ? -1 : 1))
+      .slice(0, 5);
+    if (recentConfirmed.length) {
+      html += `<section class="card"><h3>最近の確定・済</h3><p class="tiny">間違えて押したときは「予定に戻す」で取り消せます（口座残高も元に戻ります）。</p>
+        <ul class="list">${recentConfirmed.map(txItem).join("")}</ul></section>`;
+    }
 
     const overdue = state.transactions.filter((x) => x.status === "planned" && x.date < t);
     if (overdue.length) {
@@ -386,6 +422,7 @@
       <div class="meta">${esc(accName(x.accountId))}・${esc(cat(x.categoryId).name)}${x.recurrenceId ? "・定期の1回分" : ""}${x.balanceAlreadyReflected ? "・残高反映済み" : ""}</div></div>
       <span class="amt">${signed(x.amount)}</span><span class="actions">
       ${x.status === "planned" ? `<button class="small" data-action="tx-confirm" data-id="${esc(x.id)}">確定</button>` : ""}
+      ${K.canUnconfirm(x) ? `<button class="small" data-action="tx-unconfirm" data-id="${esc(x.id)}">予定に戻す</button>` : ""}
       <button class="small ghost" data-action="tx-edit" data-id="${esc(x.id)}">編集</button></span></li>`;
 
   /* ---------- 画面: 分析 ---------- */
@@ -872,8 +909,7 @@
         toast("今回分をスキップしました");
       },
       reflected: () => {
-        K.completeOccurrence(state, r.id, original, { reflect: false });
-        commit();
+        undoable("済にしました（残高は変更なし）", () => K.completeOccurrence(state, r.id, original, { reflect: false }));
       },
     };
     openSheet(`${r.label}（${D.dayLabel(original)}分）`, `<div style="display:grid;gap:14px">
@@ -1063,16 +1099,13 @@
       commit();
     },
     "tx-edit": (b) => txSheet(state.transactions.find((x) => x.id === b.dataset.id)),
-    "tx-confirm": (b) => {
-      K.confirmTransaction(state, b.dataset.id);
-      commit();
-      toast("確定して残高に反映しました");
+    "tx-confirm": (b) => undoable("確定して残高に反映しました", () => K.confirmTransaction(state, b.dataset.id)),
+    "tx-unconfirm": (b) => {
+      const x = state.transactions.find((t) => t.id === b.dataset.id);
+      if (!x) return;
+      undoable(`「${x.label || cat(x.categoryId).name}」を予定に戻しました`, () => K.unconfirmTransaction(state, x.id));
     },
-    "occ-done": (b) => {
-      K.completeOccurrence(state, b.dataset.id, b.dataset.date);
-      commit();
-      toast("残高に反映しました");
-    },
+    "occ-done": (b) => undoable("残高に反映しました", () => K.completeOccurrence(state, b.dataset.id, b.dataset.date)),
     "occ-edit": (b) => occurrenceSheet(state.recurrences.find((x) => x.id === b.dataset.id), b.dataset.date),
     "rec-new": () => recSheet(null),
     "rec-edit": (b) => recSheet(state.recurrences.find((x) => x.id === b.dataset.id)),
@@ -1161,9 +1194,7 @@
   document.addEventListener("change", (e) => {
     const t = e.target;
     if (t.dataset.action === "transfer-status") {
-      K.setTransferStatus(state, t.dataset.id, t.value);
-      commit();
-      toast(`状態を「${K.TRANSFER_STATUS[t.value]}」にしました`);
+      undoable(`状態を「${K.TRANSFER_STATUS[t.value]}」にしました`, () => K.setTransferStatus(state, t.dataset.id, t.value));
       return;
     }
     if (t.dataset.action === "import" && t.files[0]) {

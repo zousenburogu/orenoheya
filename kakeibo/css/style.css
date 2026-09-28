@@ -402,6 +402,17 @@ dialog.sheet .sheet-foot { display: flex; gap: 8px; justify-content: flex-end; m
   max-width: calc(100% - 32px);
 }
 
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast .toast-undo {
+  border: 0;
+  background: none;
+  color: var(--bg);
+  font-weight: 700;
+  text-decoration: underline;
+  padding: 4px 2px;
+  min-height: 0;
+  white-space: nowrap;
+}
 .empty { text-align: center; color: var(--text-2); padding: 24px 8px; }
 .empty p { margin: 0 0 12px; }
 details summary { cursor: pointer; color: var(--text-2); font-size: 14px; }
