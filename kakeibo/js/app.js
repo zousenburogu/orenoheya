@@ -86,6 +86,11 @@
     String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   const today = () => D.today();
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const nowParts = () => {
+    const n = new Date();
+    return { date: today(), time: `${pad2(n.getHours())}:${pad2(n.getMinutes())}` };
+  };
   const $ = (sel, root = document) => root.querySelector(sel);
   const app = $("#app");
 
@@ -198,6 +203,11 @@
       <div class="card tile"><div class="label">給料日前日の残高見込み</div><div class="value num">${esc(yen((f.days[f.days.length - 2] || f.days[0]).balance))}</div>
         <div class="sub">着金待ちは含めない場合</div></div>
     </section>`;
+
+    if (K.needsReminder(state, nowParts())) {
+      html += `<section>${alertBox("warning", `<div>今日（${esc(D.dayLabelLong(t))}）はまだ記録がありません</div>
+        <div class="row wrap" style="gap:8px;margin-top:8px"><button class="small primary" data-tab-go="input">入力する</button><button class="small" data-sub-go="import">画像から取り込む</button><button class="small ghost" data-action="no-spend">今日は使っていない</button></div>`)}</section>`;
+    }
 
     html += `<section>${al.length ? al.map((a) => alertBox(a.level, `<div>${esc(a.message)}</div>`)).join("") : alertBox("good", "<div>60日先まで、残高が目安を下回る予測はありません</div>")}</section>`;
 
@@ -743,6 +753,14 @@
       <label class="field">確定申告チェックの目安（臨時収入の年間合計）<input name="taxThreshold" inputmode="numeric" value="${esc(s.taxThreshold)}"></label>
       <label class="check"><input type="checkbox" name="notify" ${s.notify ? "checked" : ""} ${notifySupported ? "" : "disabled"}> アプリを開いたときに警告を通知する${notifySupported ? "" : "（このブラウザは非対応）"}</label>
       <button class="primary" type="submit">保存</button></form></section>
+      <section class="card"><h3>記録のリマインダー</h3>
+        <form class="stack" data-form="reminder" style="gap:10px">
+          <div class="grid2"><label class="field">通知する時刻<input type="time" name="reminderTime" value="${esc(s.reminderTime || "")}"></label>
+          <button type="submit" style="align-self:end">保存</button></div>
+        </form>
+        <p class="small" style="margin:10px 0 6px"><b>iPhoneに毎日通知する</b>：下のボタンからカレンダーに「家計簿を記入」の予定（毎日・通知付き）を追加します。アプリを閉じていても通知されます。</p>
+        <button class="primary" data-action="reminder-ics">${esc(s.reminderTime || "21:00")}の通知をカレンダーに追加</button>
+        <p class="tiny" style="margin:8px 0 0">カレンダーの通知は記録済みの日も届きます（カレンダーからはアプリの中身が見えないため）。記録済みなら無視してください。アプリを開いたときは、指定の時刻を過ぎて今日の記録がなければホームに知らせが出ます。止めたいときはカレンダーの予定を削除してください。</p></section>
       <section class="card"><h3>データ</h3><p class="tiny">データはこの端末のブラウザ内にだけ保存されます。機種変更やブラウザのデータ削除に備えて、ときどき書き出してください。</p>
       <div class="row wrap"><button data-action="export">JSONを書き出す</button><label class="btn" style="display:inline-flex;align-items:center">JSONを読み込む<input type="file" accept="application/json,.json" data-action="import" hidden></label>
       <button data-action="sample">サンプルデータを読み込む</button><button class="danger" data-action="reset">すべて削除</button></div></section>
@@ -1138,7 +1156,7 @@
       };
       if (p) Object.assign(p, data);
       else {
-        state.payslips.push(Object.assign({ id: K.uid("slip") }, data));
+        state.payslips.push(Object.assign({ id: K.uid("slip"), createdOn: today() }, data));
         if (fd.get("record") === "on" && state.settings.salaryAccountId) {
           // 同じ日の給与の定期ルール・予定があれば置き換える
           const salaryRec = state.recurrences.find((r) => r.categoryId === "cat_salary" && r.accountId === state.settings.salaryAccountId && r.amount > 0);
@@ -1405,6 +1423,35 @@
         }
       );
     },
+    "no-spend": () => undoable("今日は「使っていない」にしました", () => K.markNoSpend(state, today())),
+    "reminder-ics": () => {
+      const time = state.settings.reminderTime || "21:00";
+      if (location.protocol !== "file:" && time === "21:00") {
+        // 21:00 はサイトに置いた .ics を開く（iPhone の Safari ではそのまま「カレンダーに追加」画面になる）
+        location.href = "reminder-2100.ics";
+        return;
+      }
+      const [h, m] = time.split(":").map(Number);
+      const start = new Date();
+      start.setHours(h, m, 0, 0);
+      const z = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+      const url = location.protocol === "file:" ? "" : location.href.split(/[?#]/)[0];
+      const ics = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//zousenburogu//kakeibo//JA", "METHOD:PUBLISH",
+        "BEGIN:VEVENT", `UID:kakeibo-daily-reminder-${time.replace(":", "")}@kakeibo`, `DTSTAMP:${z(new Date())}`,
+        `DTSTART:${z(start)}`, "DURATION:PT5M", "RRULE:FREQ=DAILY", "SUMMARY:家計簿を記入",
+        `DESCRIPTION:今日の支出を家計簿に記録しましょう。記録済みなら無視してOK。${url ? `\\n${url}` : ""}`,
+        ...(url ? [`URL:${url}`] : []), "TRANSP:TRANSPARENT",
+        "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:家計簿を記入", "TRIGGER:PT0M", "END:VALARM",
+        "END:VEVENT", "END:VCALENDAR", "",
+      ].join("\r\n");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+      a.download = `kakeibo-reminder-${time.replace(":", "")}.ics`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast("ダウンロードしたファイルを開いて、カレンダーに追加してください");
+    },
     "goal-new": () => goalSheet(null),
     "goal-edit": (b) => goalSheet(state.goals.find((x) => x.id === b.dataset.id)),
     "cat-new": () => catSheet(null),
@@ -1567,6 +1614,11 @@
       });
       commit();
       toast("保存しました");
+    } else if (kind === "reminder") {
+      state.settings.reminderTime = fd.get("reminderTime") || "";
+      commit();
+      scheduleReminder();
+      toast(state.settings.reminderTime ? `${state.settings.reminderTime}に確認します` : "リマインダーをオフにしました");
     } else if (kind === "settings") {
       const notify = fd.get("notify") === "on";
       Object.assign(state.settings, {
@@ -1646,11 +1698,42 @@
 
   actions["check-update"] = () => checkForUpdate({ manual: true });
 
+  /* ---------- 開いている間のリマインダー ---------- */
+
+  // アプリを開いたまま指定時刻になったら、今日の記録がなければ知らせる（閉じているときはカレンダーの通知に任せる）
+  let reminderTimer = null;
+  const scheduleReminder = () => {
+    clearTimeout(reminderTimer);
+    const at = state.settings.reminderTime;
+    if (!at) return;
+    const [h, m] = at.split(":").map(Number);
+    const target = new Date();
+    target.setHours(h, m, 0, 0);
+    const ms = target - new Date();
+    if (ms <= 0) return;
+    reminderTimer = setTimeout(() => {
+      if (!K.needsReminder(state, nowParts())) return;
+      render();
+      if ("Notification" in window && Notification.permission === "granted") {
+        try {
+          new Notification("家計簿を記入", { body: "今日はまだ記録がありません" });
+        } catch (e) { /* ページからの通知に非対応のブラウザ */ }
+      } else {
+        toast("今日はまだ記録がありません");
+      }
+    }, Math.min(ms, 2147483647));
+  };
+
   render();
   notifyOnOpen();
   checkForUpdate();
+  scheduleReminder();
   // しばらく開きっぱなしのとき・アプリに戻ってきたときも確認する
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") checkForUpdate();
+    if (document.visibilityState === "visible") {
+      checkForUpdate();
+      scheduleReminder();
+      if (ui.tab === "home") render();
+    }
   });
 })();

@@ -248,7 +248,7 @@
 
   // 給与明細を登録し、必要なら手取りを給与口座に実績として記録（同じ頃の給与予定・定期ルールがあれば置き換え、二重計上はしない）
   const recordPayslip = (state, data, { record = true } = {}) => {
-    const slip = Object.assign({ id: K.uid("slip"), memo: "" }, data, { net: data.gross - data.deductions });
+    const slip = Object.assign({ id: K.uid("slip"), memo: "", createdOn: D.today() }, data, { net: data.gross - data.deductions });
     state.payslips.push(slip);
     const acc = state.settings.salaryAccountId;
     if (!record || !acc) return slip;

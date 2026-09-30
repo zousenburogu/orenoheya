@@ -43,6 +43,8 @@
       salaryAccountId: "",
       extraHolidays: [],
       taxThreshold: 200000,
+      reminderTime: "21:00",
+      noSpendDates: [],
     },
   });
 
@@ -149,7 +151,7 @@
   };
 
   const addTransaction = (state, tx) => {
-    const t = Object.assign({ id: uid("tx"), status: "actual", label: "", categoryId: "cat_other" }, tx);
+    const t = Object.assign({ id: uid("tx"), status: "actual", label: "", categoryId: "cat_other", createdOn: D.today() }, tx);
     t.amount = Math.round(t.amount);
     state.transactions.push(t);
     if (t.status === "actual" && !t.balanceAlreadyReflected) applyToAccount(state, t.accountId, t.amount);
@@ -711,7 +713,30 @@
     return out;
   };
 
+  /* ---------- 記録のリマインダー ---------- */
+
+  // その日に何か記録したか（その日に入力した取引・その日付の実績・「今日は使っていない」）
+  const recordedOn = (state, date) =>
+    (state.settings.noSpendDates || []).includes(date) ||
+    state.transactions.some((t) => t.createdOn === date || (t.status === "actual" && t.date === date)) ||
+    state.payslips.some((p) => p.createdOn === date);
+
+  // リマインダー時刻（"21:00"）を過ぎていて、今日まだ何も記録していなければ true
+  const needsReminder = (state, { date, time }) => {
+    const at = state.settings.reminderTime;
+    if (!at) return false;
+    return time >= at && !recordedOn(state, date);
+  };
+
+  const markNoSpend = (state, date) => {
+    const list = state.settings.noSpendDates || (state.settings.noSpendDates = []);
+    if (!list.includes(date)) list.push(date);
+    // 古い記録はためこまない
+    state.settings.noSpendDates = list.filter((d) => d >= D.addDays(date, -60));
+  };
+
   const api = {
+    recordedOn, needsReminder, markNoSpend,
     uid, yen, evalAmount, isFormula, WINDFALL, TRANSFER_STATUS, IN_FLIGHT,
     defaultCategories, emptyState, normalizeState,
     accountById, categoryById, totalAccountIds, sumBalances,

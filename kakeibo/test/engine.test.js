@@ -311,3 +311,25 @@ test("実績と見込みの二重計上をしない：今日の生活費・今�
   const ev2 = K.collectEvents(s, "2026-09-30", "2026-09-30", { today: "2026-09-30" });
   assert.equal(ev2.filter((e) => e.source === "living" || e.source === "misc").length, 0);
 });
+
+test("記録のリマインダー：21時を過ぎて今日の記録がなければ知らせる", () => {
+  const s = setup();
+  const now = (time) => ({ date: "2026-09-30", time });
+  assert.equal(s.settings.reminderTime, "21:00");
+  assert.equal(K.needsReminder(s, now("20:59")), false);
+  assert.equal(K.needsReminder(s, now("21:00")), true);
+  // 今日の日付の実績を記録したら不要
+  K.addTransaction(s, { accountId: "bank", date: "2026-09-30", amount: -500, label: "昼食", createdOn: "2026-09-30" });
+  assert.equal(K.needsReminder(s, now("21:30")), false);
+  // 「今日は使っていない」でも不要
+  const s2 = setup();
+  K.markNoSpend(s2, "2026-09-30");
+  assert.equal(K.needsReminder(s2, now("22:00")), false);
+  // 今日入力した未来の予定も「記録した」とみなす
+  const s3 = setup();
+  K.addTransaction(s3, { accountId: "bank", date: "2026-10-15", amount: -38000, status: "planned", createdOn: "2026-09-30" });
+  assert.equal(K.recordedOn(s3, "2026-09-30"), true);
+  // 時刻を空にするとリマインダーなし
+  s.settings.reminderTime = "";
+  assert.equal(K.needsReminder(setup(), now("23:00")), true);
+});
