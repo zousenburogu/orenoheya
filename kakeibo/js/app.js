@@ -687,7 +687,9 @@
       <button class="primary" type="submit">保存</button></form></section>
       <section class="card"><h3>データ</h3><p class="tiny">データはこの端末のブラウザ内にだけ保存されます。機種変更やブラウザのデータ削除に備えて、ときどき書き出してください。</p>
       <div class="row wrap"><button data-action="export">JSONを書き出す</button><label class="btn" style="display:inline-flex;align-items:center">JSONを読み込む<input type="file" accept="application/json,.json" data-action="import" hidden></label>
-      <button data-action="sample">サンプルデータを読み込む</button><button class="danger" data-action="reset">すべて削除</button></div></section>`;
+      <button data-action="sample">サンプルデータを読み込む</button><button class="danger" data-action="reset">すべて削除</button></div></section>
+      <section class="card"><h3>アプリのバージョン</h3><div class="row between wrap"><span class="small muted num">${esc(document.documentElement.dataset.version || "-")}</span><button data-action="check-update">更新を確認</button></div>
+      <p class="tiny">表示が古いままのときは「更新を確認」を押してください。入力したデータは消えません。</p></section>`;
   };
 
   const SUB = {
@@ -1484,6 +1486,58 @@
     } catch (e) { /* 一部ブラウザはページからの通知に非対応 */ }
   };
 
+  /* ---------- 新しいバージョンの確認 ---------- */
+
+  // Safari（とくにホーム画面に追加したもの）は古いファイルを使い続けることがあるので、
+  // 開いたときにキャッシュを通さず index.html を取りに行き、バージョンが違えば更新を促す
+  const APP_VERSION = document.documentElement.dataset.version || "";
+
+  const reloadToVersion = (v) => {
+    const url = new URL(location.href);
+    url.searchParams.set("v", v || String(Date.now()));
+    location.replace(url.toString());
+  };
+
+  const checkForUpdate = async ({ manual = false } = {}) => {
+    if (location.protocol === "file:") {
+      if (manual) toast("ファイルを直接開いている場合は、新しいファイルをダウンロードし直してください");
+      return;
+    }
+    try {
+      const res = await fetch(`index.html?check=${Date.now()}`, { cache: "no-store" });
+      const html = await res.text();
+      const m = /data-version="([^"]+)"/.exec(html);
+      const latest = m ? m[1] : "";
+      if (latest && latest !== APP_VERSION) showUpdateBar(latest);
+      else if (manual) toast(`最新版です（${APP_VERSION}）`);
+    } catch (e) {
+      if (manual) toast("確認できませんでした（オフラインの可能性があります）");
+    }
+  };
+
+  const showUpdateBar = (latest) => {
+    if ($(".update-bar")) return;
+    const bar = document.createElement("div");
+    bar.className = "update-bar";
+    bar.setAttribute("role", "status");
+    const text = document.createElement("span");
+    text.textContent = "新しいバージョンがあります";
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "small primary";
+    b.textContent = "更新する";
+    b.addEventListener("click", () => reloadToVersion(latest));
+    bar.append(text, b);
+    document.body.prepend(bar);
+  };
+
+  actions["check-update"] = () => checkForUpdate({ manual: true });
+
   render();
   notifyOnOpen();
+  checkForUpdate();
+  // しばらく開きっぱなしのとき・アプリに戻ってきたときも確認する
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") checkForUpdate();
+  });
 })();

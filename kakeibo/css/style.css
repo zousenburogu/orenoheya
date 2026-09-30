@@ -425,6 +425,19 @@ dialog.sheet .sheet-foot { display: flex; gap: 8px; justify-content: flex-end; m
 .calc-tools { display: none; gap: 6px; flex-wrap: wrap; }
 .field:focus-within .calc-tools { display: flex; }
 .calc-tools button { min-width: 40px; font-size: 16px; padding: 4px 0; flex: 1; }
+.update-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--info-bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
 .empty { text-align: center; color: var(--text-2); padding: 24px 8px; }
 .empty p { margin: 0 0 12px; }
 details summary { cursor: pointer; color: var(--text-2); font-size: 14px; }
