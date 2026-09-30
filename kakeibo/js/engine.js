@@ -309,6 +309,20 @@
     return t;
   };
 
+  // 着金待ちの振替を「着金済み」にする。reflect=false は「入金先の残高は手入力で更新済み」（二重に足さない）
+  const completeTransfer = (state, id, { reflect = true } = {}) => {
+    const t = state.transfers.find((x) => x.id === id);
+    if (!t) return null;
+    if (!reflect) t.toApplied = true;
+    return setTransferStatus(state, id, "done");
+  };
+
+  // 着金待ち・申請中で、入金先が対象の口座に入っている振替の合計
+  const inFlightTotal = (state, scope) => {
+    const ids = resolveScope(state, scope);
+    return state.transfers.filter((t) => IN_FLIGHT.includes(t.status) && ids.includes(t.toId)).reduce((s, t) => s + t.amount, 0);
+  };
+
   const removeTransfer = (state, id) => {
     const t = state.transfers.find((x) => x.id === id);
     if (!t) return;
@@ -743,7 +757,7 @@
     addTransaction, removeTransaction, updateTransaction, confirmTransaction, completeOccurrence,
     canUnconfirm, unconfirmTransaction,
     overrideOccurrence, skipOccurrence,
-    addTransfer, removeTransfer, setTransferStatus,
+    addTransfer, removeTransfer, setTransferStatus, completeTransfer, inFlightTotal,
     expandRecurrence, nextPayday, collectEvents, forecast, hasInFlightInScope, resolveScope,
     sortedPayslips, overtimeRate, estimateNextPay,
     ageOn, birthdayAtAge, goalTargetDate, goalPlan, categorySummary, windfallOfYear, alerts,

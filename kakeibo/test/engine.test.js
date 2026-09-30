@@ -333,3 +333,21 @@ test("記録のリマインダー：21時を過ぎて今日の記録がなけれ
   s.settings.reminderTime = "";
   assert.equal(K.needsReminder(setup(), now("23:00")), true);
 });
+
+test("着金したら着金待ちの比較は出なくなる（残高更新済みなら二重に足さない）", () => {
+  const s = setup();
+  const t = K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 30000, date: "2026-10-02", status: "pending" });
+  assert.equal(K.hasInFlightInScope(s, "total"), true);
+  assert.equal(K.inFlightTotal(s, "total"), 30000);
+  K.completeTransfer(s, t.id);
+  assert.equal(K.hasInFlightInScope(s, "total"), false);
+  assert.equal(K.inFlightTotal(s, "total"), 0);
+  assert.equal(K.accountById(s, "bank").balance, 130000);
+  // 残高を先に手で更新していた場合
+  const s2 = setup();
+  const t2 = K.addTransfer(s2, { fromId: "fx", toId: "bank", amount: 30000, date: "2026-10-02", status: "pending" });
+  K.accountById(s2, "bank").balance = 130000;
+  K.completeTransfer(s2, t2.id, { reflect: false });
+  assert.equal(K.accountById(s2, "bank").balance, 130000);
+  assert.equal(K.hasInFlightInScope(s2, "total"), false);
+});

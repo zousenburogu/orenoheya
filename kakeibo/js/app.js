@@ -192,6 +192,7 @@
     const payday = rangeEnd("payday", t);
     const f = K.forecast(state, { today: t, end: payday, scenario: "pessimistic" });
     const al = K.alerts(state, { today: t });
+    const inflightHome = K.inFlightTotal(state, "total");
     const excluded = state.accounts.filter((a) => a.includeInTotal === false);
 
     let html = "";
@@ -201,7 +202,7 @@
       <div class="card tile"><div class="label">給料日（${esc(D.dayLabelLong(payday))}）までの最低残高</div><div class="value num">${esc(yen(f.min.balance))}</div>
         <div class="sub">${esc(D.dayLabelLong(f.min.date))}・あと${D.diffDays(t, payday)}日</div></div>
       <div class="card tile"><div class="label">給料日前日の残高見込み</div><div class="value num">${esc(yen((f.days[f.days.length - 2] || f.days[0]).balance))}</div>
-        <div class="sub">着金待ちは含めない場合</div></div>
+        <div class="sub">${inflightHome ? `着金待ち ${esc(yen(inflightHome))} は含めない場合` : `あと${D.diffDays(t, payday) - 1}日`}</div></div>
     </section>`;
 
     if (K.needsReminder(state, nowParts())) {
@@ -255,7 +256,9 @@
           if (seen.has(key)) return "";
           seen.add(key);
           const tr = state.transfers.find((x) => x.id === e.refId);
-          return `<li><span class="date">${esc(D.dayLabelLong(e.date))}</span><div class="grow"><div class="ellipsis">${esc(e.label)}</div><div class="meta">振替・${esc(K.TRANSFER_STATUS[tr.status])}</div></div><span class="amt num">${esc(yen(tr.amount))}</span></li>`;
+          const late = K.IN_FLIGHT.includes(tr.status) && tr.date < from;
+          return `<li><span class="date">${esc(D.dayLabelLong(tr.date))}</span><div class="grow"><div class="ellipsis">${esc(e.label)}</div><div class="meta">振替・${esc(K.TRANSFER_STATUS[tr.status])}${late ? ' <span class="badge warn">予定日超過</span>' : ""}</div></div><span class="amt num">${esc(yen(tr.amount))}</span>
+            ${K.IN_FLIGHT.includes(tr.status) ? `<span class="actions"><button class="small" data-action="transfer-arrived" data-id="${esc(tr.id)}">着金した</button></span>` : ""}</li>`;
         }
         const recTransfer = e.source === "recurrence" && e.transfer;
         if (recTransfer) {
@@ -655,7 +658,7 @@
           <div class="tile"><div class="label">このペースだと期日に</div><div class="value num">${esc(yen(p.projected))}</div></div>
         </div>
         ${alertBox(level, `<div>${p.onTrack ? "順調です" : `要調整：月あと <b class="num">${esc(yen(p.gapMonthly))}</b> 貯金を増やす必要があります`}</div>`)}
-        <p class="tiny" style="margin:0">必要額 = （目標金額 − 現在資産）÷ 貯め始める日から期日までの期間。予測ペースは定期収支・生活費・予定から今後12か月の増減を出したもの（着金待ちは含めない）。</p></section>`;
+        <p class="tiny" style="margin:0">必要額 = （目標金額 − 現在資産）÷ 貯め始める日から期日までの期間。予測ペースは定期収支・生活費・予定から今後12か月の増減を出したもの${K.inFlightTotal(state, "total") ? "（着金待ちは含めない）" : ""}。</p></section>`;
     });
     return html;
   };
@@ -867,6 +870,12 @@
     sheetSubmit = null;
   };
   $("#sheetClose").addEventListener("click", closeSheet);
+  // 閉じたシートの中身は残さない（Esc で閉じた場合も）
+  sheet.addEventListener("close", () => {
+    $("#sheetBody").innerHTML = "";
+    sheetSubmit = null;
+    sheetOnInput = null;
+  });
   $("#sheetForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const submitter = e.submitter;
@@ -1347,6 +1356,22 @@
       if (!confirm("この振替を削除しますか？口座残高への反映も取り消されます。")) return;
       K.removeTransfer(state, b.dataset.id);
       commit();
+    },
+    "transfer-arrived": (b) => {
+      const tr = state.transfers.find((x) => x.id === b.dataset.id);
+      if (!tr) return;
+      const to = K.accountById(state, tr.toId);
+      sheetActions = {
+        reflected: () => undoable("着金済みにしました（残高は変更なし）", () => K.completeTransfer(state, tr.id, { reflect: false })),
+      };
+      openSheet(`${to ? to.name : "入金先"}に${yen(tr.amount)}が着金`, `<div style="display:grid;gap:14px">
+        <p class="small" style="margin:0">着金済みにすると、着金待ちの表示と「着金しない前提」の比較が消えます。</p>
+        <p class="small muted" style="margin:0">今の${esc(to ? to.name : "入金先")}の残高：<b class="num" style="color:var(--text)">${esc(yen(to ? to.balance : 0))}</b></p>
+        <div class="sheet-foot" style="flex-wrap:wrap">
+          <button type="submit" class="ghost" data-sheet-action="reflected" formnovalidate>残高はもう更新した</button>
+          <button type="submit" class="primary">残高に${esc(yen(tr.amount))}を足す</button></div></div>`, () => {
+        undoable(`着金済みにして${to ? to.name : ""}に${yen(tr.amount)}を足しました`, () => K.completeTransfer(state, tr.id));
+      });
     },
     "tx-edit": (b) => txSheet(state.transactions.find((x) => x.id === b.dataset.id)),
     "tx-confirm": (b) => {
