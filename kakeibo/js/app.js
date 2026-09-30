@@ -707,17 +707,38 @@
         ${!Number(st.annualBonus) ? `<p class="tiny" style="margin:0;color:var(--critical)">ボーナスの金額を入れると、その分を差し引いて計算します（今は0円で計算中）</p>` : ""}
       </form></section>`;
 
-    html += `<section class="card">
-      <div class="tiles">
-        <div class="tile"><div class="label">月の目標（ボーナス除く）</div><div class="value num">${esc(yen(cal.monthlyTarget))}</div><div class="sub num">（${esc(yen(cal.annual))} − ${esc(yen(cal.bonus))}）÷ 12</div></div>
-        <div class="tile"><div class="label">基本給</div><div class="value num">${esc(yen(cal.base))}</div></div>
-        <div class="tile"><div class="label">残業・手当で稼ぐ分</div><div class="value num">${esc(yen(cal.extraMonthly))}<span class="small">/月</span></div></div>
-      </div>
-      ${cal.onTrack
-        ? alertBox("good", `<div>基本給とボーナスだけで年収目標に届きます</div>`)
-        : alertBox("warning", `<div>${y}年${m}月は平日 ${cal.workdays}日。<b>平日1日あたり額面 <span class="num">${esc(yen(cal.perDayGross))}</span></b>${cal.perDayHours !== null ? `（残業 約<b class="num">${cal.perDayHours}</b>時間）` : ""} 基本給に上乗せで稼げば、年収 ${esc(yen(cal.annual))} に届きます${cal.perDayNet !== null ? `。手取りだと約 <span class="num">${esc(yen(cal.perDayNet))}</span>` : ""}</div>`)}
-      ${cal.ytdCount ? `<p class="small" style="margin:0">今年の支給額（給与明細 ${cal.ytdCount}件）：<b class="num">${esc(yen(cal.ytdGross))}</b>　年収目標まであと <b class="num">${esc(yen(Math.max(0, cal.annual - cal.ytdGross)))}</b></p>` : ""}
-    </section>`;
+    const SRC = { payslip: "給与明細", deposit: "入金から推定", "deposit-net": "入金額（手取り）", assumed: "基本給で仮定", future: "これから" };
+    if (cal.thisYear) {
+      const y0 = cal.ytd.year;
+      const assumed = cal.ytd.months.filter((x) => x.source === "assumed").length;
+      html += `<section class="card"><h3>${y0}年の年収 ${esc(yen(cal.annual))} まで</h3>
+        <div class="tiles" style="margin-top:8px">
+          <div class="tile"><div class="label">もらった給料（額面）</div><div class="value num">${esc(yen(cal.ytd.gross + cal.ytd.bonusReceived))}</div><div class="sub">${cal.ytd.bonusReceived ? `うちボーナス ${esc(yen(cal.ytd.bonusReceived))}` : "ボーナスはまだ"}</div></div>
+          <div class="tile"><div class="label">これからの基本給</div><div class="value num">${esc(yen(cal.base * cal.remainingPaychecks))}</div><div class="sub">${esc(yen(cal.base))} × ${cal.remainingPaychecks}回</div></div>
+          <div class="tile"><div class="label">これからのボーナス</div><div class="value num">${esc(yen(cal.bonusRemaining))}</div></div>
+          <div class="tile"><div class="label">残業・手当で稼ぐ分</div><div class="value num">${esc(yen(cal.extraNeeded))}</div><div class="sub">残りの平日 ${cal.remainingWorkdays}日</div></div>
+        </div>
+        ${cal.onTrack
+          ? alertBox("good", `<div>基本給とボーナスだけで ${esc(yen(cal.annual))} に届きます</div>`)
+          : alertBox("warning", `<div>年末まで<b>平日1日あたり額面 <span class="num">${esc(yen(cal.perDayGross))}</span></b>${cal.perDayHours !== null ? `（残業 約<b class="num">${cal.perDayHours}</b>時間）` : ""} 基本給に上乗せで稼げば届きます${cal.perDayNet !== null ? `。手取りだと約 <span class="num">${esc(yen(cal.perDayNet))}</span>` : ""}。給料が入るたびに更新されます</div>`)}
+        ${assumed ? `<p class="tiny" style="margin:0">給与明細も入金の記録もない月が${assumed}か月あり、基本給で仮定しています。給与明細を登録（画像から取り込みも可）すると正確になります。</p>` : ""}
+        <details style="margin-top:8px"><summary>月ごとの支給額</summary>
+          <table class="data" style="margin-top:6px"><tbody>${cal.ytd.months.map((x) => `<tr><td>${Number(x.month.slice(5))}月</td><td class="r num">${x.paid ? esc(yen(x.gross)) : "—"}</td><td class="tiny">${SRC[x.source]}</td></tr>`).join("")}</tbody></table>
+          <div class="row" style="gap:8px;margin-top:8px"><button class="small" data-sub-go="payslips">給与明細を追加</button><button class="small" data-sub-go="import">画像から取り込む</button></div>
+        </details>
+      </section>`;
+    } else {
+      html += `<section class="card">
+        <div class="tiles">
+          <div class="tile"><div class="label">月の目標（ボーナス除く）</div><div class="value num">${esc(yen(cal.monthlyTarget))}</div><div class="sub num">（${esc(yen(cal.annual))} − ${esc(yen(cal.bonus))}）÷ 12</div></div>
+          <div class="tile"><div class="label">基本給</div><div class="value num">${esc(yen(cal.base))}</div></div>
+          <div class="tile"><div class="label">残業・手当で稼ぐ分</div><div class="value num">${esc(yen(cal.extraMonthly))}<span class="small">/月</span></div></div>
+        </div>
+        ${cal.onTrack
+          ? alertBox("good", `<div>基本給とボーナスだけで年収目標に届きます</div>`)
+          : alertBox("warning", `<div>${y}年${m}月は平日 ${cal.workdays}日。<b>平日1日あたり額面 <span class="num">${esc(yen(cal.perDayGross))}</span></b>${cal.perDayHours !== null ? `（残業 約<b class="num">${cal.perDayHours}</b>時間）` : ""} 基本給に上乗せで稼げば届きます${cal.perDayNet !== null ? `。手取りだと約 <span class="num">${esc(yen(cal.perDayNet))}</span>` : ""}</div>`)}
+      </section>`;
+    }
 
     html += `<section class="card">${calendarGrid(cal, (d) => {
       if (!d.target || d.dayOff) return {};
@@ -730,9 +751,13 @@
       <p class="tiny" style="margin:10px 0 0">数字は平日1日あたり基本給に上乗せで稼ぐ額面（円）、h は残業時間の目安。灰色は土日・祝日・会社の休み。</p></section>`;
 
     html += `<section class="card"><h3>計算のしかた</h3><ul class="small" style="margin:0;padding-left:18px;display:grid;gap:4px">
-      <li>月の目標 ＝（年収の目標 − ボーナス）÷ 12 ＝ <span class="num">${esc(yen(cal.monthlyTarget))}</span></li>
+      ${cal.thisYear
+        ? `<li>残業・手当で稼ぐ分 ＝ 年収の目標 − もらった給料 − これからの基本給 − これからのボーナス ＝ <span class="num">${esc(yen(cal.extraNeeded))}</span></li>
+      <li>平日1日あたり ＝ 残業・手当で稼ぐ分 ÷ 今日から年末までの平日数（${cal.remainingWorkdays}日）</li>
+      <li>もらった給料は、給与明細の支給額 → なければ給与の入金（手取り）を控除率で額面に戻した額 → どちらもなければ基本給、の順で数えます</li>`
+        : `<li>月の目標 ＝（年収の目標 − ボーナス）÷ 12 ＝ <span class="num">${esc(yen(cal.monthlyTarget))}</span></li>
       <li>残業・手当で稼ぐ分 ＝ 月の目標 − 基本給 ＝ <span class="num">${esc(yen(cal.extraMonthly))}</span></li>
-      <li>平日1日あたり ＝ 残業・手当で稼ぐ分 ÷ その月の平日数（${cal.workdays}日）</li>
+      <li>平日1日あたり ＝ 残業・手当で稼ぐ分 ÷ その月の平日数（${cal.workdays}日）</li>`}
       <li>残業時間 ＝ 額面 ÷ 残業1時間あたり ${esc(yen(cal.overtimeRate))}${cal.rateSource === "estimate" ? "（基本給 ÷ 月の所定時間 約163時間 × 1.25 で推定。給与明細を登録すると実際の単価を使います）" : "（給与明細から）"}</li>
       ${cal.deductionRate !== null ? `<li>手取り ＝ 額面 ×（1 − 控除率 ${(cal.deductionRate * 100).toFixed(1)}%）</li>` : ""}
       <li>年収は額面（税金・社会保険を引く前）の金額です</li></ul></section>`;
