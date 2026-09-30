@@ -432,7 +432,24 @@ dialog.sheet .sheet-foot { display: flex; gap: 8px; justify-content: flex-end; m
 .calc-hint { font-size: 13px; color: var(--text-2); min-height: 0; text-align: right; }
 .calc-hint:empty { display: none; }
 .calc-hint.bad { color: var(--critical); }
-.calc-tools { display: none; gap: 6px; flex-wrap: wrap; }
+/* 計算キーは入力欄の下に重ねて表示する（出し入れでレイアウトがずれてボタンを押し損ねないように） */
+label.field { position: relative; }
+.calc-tools {
+  display: none;
+  gap: 6px;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  margin-top: 4px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+  min-width: 260px;
+}
 .field:focus-within .calc-tools { display: flex; }
 .calc-tools button { min-width: 40px; font-size: 16px; padding: 4px 0; flex: 1; }
 .update-bar {

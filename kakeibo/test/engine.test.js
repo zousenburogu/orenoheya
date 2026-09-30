@@ -389,3 +389,29 @@ test("稼ぐ目安カレンダー：今月は月の平日すべてで割る（�
   assert.equal(cal.perDayNet, Math.ceil(cal.gapMonthly / 19));
   assert.deepEqual(cal.days.filter((d) => d.target).map((d) => d.date), ["2026-09-30"]);
 });
+
+test("年収目標の稼ぐ目安：400万・基本給18万・ボーナスを差し引いて平日で割る", () => {
+  const s = setup();
+  Object.assign(s.settings, { annualIncomeTarget: 4000000, baseMonthlyPay: 180000, annualBonus: 400000 });
+  const cal = K.incomeCalendar(s, { today: "2026-09-30", month: "2026-10" });
+  // (400万 − 40万) ÷ 12 = 30万、基本給18万を引いて月12万。10月の平日21日
+  assert.equal(cal.monthlyTarget, 300000);
+  assert.equal(cal.extraMonthly, 120000);
+  assert.equal(cal.perDayGross, Math.ceil(120000 / 21));
+  // 明細がないときは基本給から残業単価を推定：180000 ÷ (8 × 20.4166…) × 1.25 ≒ 1,378
+  assert.equal(cal.rateSource, "estimate");
+  assert.equal(cal.overtimeRate, 1378);
+  assert.equal(cal.perDayHours, Math.ceil((cal.perDayGross / 1378) * 10) / 10);
+  assert.equal(cal.perDayNet, null);
+  // 明細があればその単価と控除率を使う
+  s.payslips.push({ payDate: "2026-09-25", gross: 250000, deductions: 50000, overtimeHours: 20, overtimePay: 40000 });
+  const cal2 = K.incomeCalendar(s, { today: "2026-09-30", month: "2026-10" });
+  assert.equal(cal2.rateSource, "payslip");
+  assert.equal(cal2.overtimeRate, 2000);
+  assert.equal(cal2.perDayNet, Math.floor(cal2.perDayGross * 0.8));
+  assert.equal(cal2.ytdGross, 250000);
+  // 基本給だけで届く場合は上乗せ不要
+  s.settings.annualIncomeTarget = 2000000;
+  s.settings.annualBonus = 0;
+  assert.equal(K.incomeCalendar(s, { today: "2026-09-30", month: "2026-10" }).onTrack, true);
+});

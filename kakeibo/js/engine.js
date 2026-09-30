@@ -44,6 +44,9 @@
       extraHolidays: [],
       taxThreshold: 200000,
       reminderTime: "21:00",
+      annualIncomeTarget: 4000000,
+      baseMonthlyPay: 180000,
+      annualBonus: 0,
       noSpendDates: [],
     },
   });
@@ -695,6 +698,52 @@
     };
   };
 
+  /**
+   * 年収目標の稼ぐ目安（額面ベース）。
+   * 月に基本給以外で稼ぐ額 ＝（年収目標 − ボーナス）÷ 12 − 基本給 を、その月の平日数で割る。
+   * 残業1時間あたりは給与明細から。明細がなければ基本給から推定（基本給 ÷（8時間 × 月平均20.4日）× 1.25）
+   */
+  const incomeCalendar = (state, opts = {}) => {
+    const today = opts.today || D.today();
+    const month = opts.month || today.slice(0, 7);
+    const st = state.settings;
+    const annual = Math.round(Number(st.annualIncomeTarget) || 0);
+    const base = Math.round(Number(st.baseMonthlyPay) || 0);
+    const bonus = Math.round(Number(st.annualBonus) || 0);
+    const first = `${month}-01`;
+    const last = D.endOfMonth(first);
+    const days = [];
+    for (let d = first; d <= last; d = D.addDays(d, 1)) {
+      const off = !isWorkday(state, d);
+      days.push({ date: d, dayOff: off, holiday: D.holidayName(d), past: d < today, today: d === today, target: !off && d >= today });
+    }
+    const workdays = days.filter((x) => !x.dayOff).length;
+    const monthlyTarget = Math.round((annual - bonus) / 12);
+    const extraMonthly = Math.max(0, monthlyTarget - base);
+    const perDayGross = workdays ? Math.ceil(extraMonthly / workdays) : 0;
+    const slips = sortedPayslips(state);
+    const rate = overtimeRate(slips);
+    const estimatedRate = base ? Math.round((base / (8 * (245 / 12))) * 1.25) : 0;
+    const hourly = rate ? rate.average : estimatedRate;
+    const perDayHours = hourly ? Math.ceil((perDayGross / hourly) * 10) / 10 : null;
+    const lastSlip = slips[slips.length - 1];
+    const deductionRate = lastSlip && Number(lastSlip.gross) ? (Number(lastSlip.deductions) || 0) / Number(lastSlip.gross) : null;
+    const perDayNet = deductionRate !== null ? Math.floor(perDayGross * (1 - deductionRate)) : null;
+    // 今年の給与明細の支給額合計（実績）
+    const year = today.slice(0, 4);
+    const ytdSlips = slips.filter((p) => String(p.payDate || "").startsWith(year));
+    const ytdGross = ytdSlips.reduce((sum, p) => sum + (Number(p.gross) || 0), 0);
+    return {
+      month, first, last, days, workdays, annual, base, bonus, monthlyTarget, extraMonthly,
+      perDayGross, perDayHours, perDayNet, deductionRate,
+      overtimeRate: hourly, rateSource: rate ? "payslip" : "estimate",
+      ytdGross, ytdCount: ytdSlips.length,
+      onTrack: extraMonthly === 0,
+      prevMonth: D.addMonths(first, -1).slice(0, 7), nextMonth: D.addMonths(first, 1).slice(0, 7),
+      hasPrev: first > `${today.slice(0, 7)}-01`, hasNext: true,
+    };
+  };
+
   /* ---------- カテゴリ別集計 ---------- */
 
   const categorySummary = (state, start, end, opts = {}) => {
@@ -803,7 +852,7 @@
     addTransfer, removeTransfer, setTransferStatus, completeTransfer, inFlightTotal,
     expandRecurrence, nextPayday, collectEvents, forecast, hasInFlightInScope, resolveScope,
     sortedPayslips, overtimeRate, estimateNextPay,
-    ageOn, birthdayAtAge, goalTargetDate, goalPlan, earningsCalendar, isWorkday, categorySummary, windfallOfYear, alerts,
+    ageOn, birthdayAtAge, goalTargetDate, goalPlan, earningsCalendar, incomeCalendar, isWorkday, categorySummary, windfallOfYear, alerts,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;
