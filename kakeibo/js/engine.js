@@ -564,13 +564,32 @@
 
   const monthsBetween = (a, b) => D.diffDays(a, b) / (365.2425 / 12);
 
+  // 満年齢（誕生日当日に1歳加算）
+  const ageOn = (birthday, date) => {
+    if (!birthday || !date) return null;
+    let age = Number(date.slice(0, 4)) - Number(birthday.slice(0, 4));
+    if (date.slice(5) < birthday.slice(5)) age--;
+    return age;
+  };
+
+  // 「○歳まで」＝ ○歳の誕生日。2/29 生まれは平年だと 2/28
+  const birthdayAtAge = (birthday, age) => (birthday && Number(age) > 0 ? D.addMonths(birthday, 12 * Number(age)) : null);
+
+  // 目標の期日：誕生日と「何歳まで」があればそこから計算、なければ直接指定した日付
+  const goalTargetDate = (goal, settings = {}) =>
+    birthdayAtAge(goal.birthday || settings.birthday, goal.targetAge) || goal.targetDate || null;
+
   const goalPlan = (state, goal, opts = {}) => {
     const today = opts.today || D.today();
     const ids = goal.accountIds && goal.accountIds.length ? goal.accountIds : totalAccountIds(state);
     const current = sumBalances(state, ids);
     const target = Math.round(Number(goal.targetAmount) || 0);
     const remaining = Math.max(0, target - current);
-    const months = Math.max(0, monthsBetween(today, goal.targetDate));
+    const birthday = goal.birthday || state.settings.birthday || "";
+    const targetDate = goalTargetDate(goal, state.settings) || today;
+    // 「いつから」貯め始めるか。過去または未指定なら今日から数える
+    const startDate = goal.startDate && goal.startDate > today ? goal.startDate : today;
+    const months = Math.max(0, monthsBetween(startDate, targetDate));
     const years = months / 12;
     const requiredMonthly = months > 0 ? Math.ceil(remaining / months) : remaining;
     const requiredYearly = years > 0 ? Math.ceil(remaining / years) : remaining;
@@ -586,6 +605,8 @@
     const projected = Math.round(current + pace * months);
 
     return {
+      targetDate, startDate, notStarted: startDate > today,
+      ageNow: ageOn(birthday, today), targetAge: goal.targetAge ? Number(goal.targetAge) : ageOn(birthday, targetDate),
       current, target, remaining, months, years, requiredMonthly, requiredYearly,
       forecastPace, pace, paceSource: manual ? "manual" : "forecast",
       windfallExcluded: goal.includeWindfall ? 0 : windfall,
@@ -681,7 +702,7 @@
     addTransfer, removeTransfer, setTransferStatus,
     expandRecurrence, nextPayday, collectEvents, forecast, hasInFlightInScope, resolveScope,
     sortedPayslips, overtimeRate, estimateNextPay,
-    goalPlan, categorySummary, windfallOfYear, alerts,
+    ageOn, birthdayAtAge, goalTargetDate, goalPlan, categorySummary, windfallOfYear, alerts,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

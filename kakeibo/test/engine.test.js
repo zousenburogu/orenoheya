@@ -270,3 +270,25 @@ test("金額欄の計算式", () => {
   assert.equal(K.isFormula("25,916"), false);
   assert.equal(K.isFormula("-500"), false);
 });
+
+test("目標：誕生日と何歳まで・いつからで期日と必要額を計算", () => {
+  const s = setup();
+  s.settings.birthday = "2000-05-12";
+  assert.equal(K.ageOn("2000-05-12", "2026-09-30"), 26);
+  assert.equal(K.ageOn("2000-05-12", "2030-05-11"), 29);
+  assert.equal(K.ageOn("2000-05-12", "2030-05-12"), 30);
+  assert.equal(K.birthdayAtAge("2000-02-29", 30), "2030-02-28");
+  const goal = { targetAmount: 8000000, targetAge: 30, startDate: "", accountIds: [] };
+  const p = K.goalPlan(s, goal, { today: "2026-09-30" });
+  assert.equal(p.targetDate, "2030-05-12");
+  assert.equal(p.startDate, "2026-09-30");
+  assert.equal(p.ageNow, 26);
+  assert.equal(p.targetAge, 30);
+  // 貯め始めを先にすると期間が短くなり、月の必要額が増える
+  const later = K.goalPlan(s, Object.assign({}, goal, { startDate: "2027-04-01" }), { today: "2026-09-30" });
+  assert.equal(later.notStarted, true);
+  assert.ok(later.months < p.months);
+  assert.ok(later.requiredMonthly > p.requiredMonthly);
+  // 年齢指定がなければ日付指定を使う（従来どおり）
+  assert.equal(K.goalTargetDate({ targetDate: "2031-01-01" }, s.settings), "2031-01-01");
+});

@@ -615,6 +615,15 @@
     return html;
   };
 
+  // 「30歳の誕生日（2030/5/12）までに ¥8,000,000・今26歳・あと3.6年」
+  const goalPeriodText = (g, p) => {
+    const until = g.targetAge && p.targetAge ? `${p.targetAge}歳の誕生日（${p.targetDate}）まで` : `${p.targetDate}まで`;
+    const parts = [`${until}に ${yen(p.target)}`];
+    if (p.ageNow !== null && p.ageNow !== undefined) parts.push(`今${p.ageNow}歳`);
+    parts.push(p.notStarted ? `${p.startDate}から貯め始めて${p.years.toFixed(1)}年` : `あと${p.years.toFixed(1)}年`);
+    return parts.join("・");
+  };
+
   const viewGoals = () => {
     let html = `<section class="row between"><h2 style="margin:0">目標</h2><button class="primary small" data-action="goal-new">＋ 目標を追加</button></section>`;
     if (!state.goals.length) return html + `<div class="card empty"><p>例：「30歳までに800万円」。期日と金額から必要な月間・年間の貯金額を逆算します。</p></div>`;
@@ -623,7 +632,7 @@
       const p = K.goalPlan(state, g, { today: t });
       const level = p.onTrack ? "good" : "warning";
       html += `<section class="card"><div class="row between"><h3>${esc(g.label || "目標")}</h3><button class="small ghost" data-action="goal-edit" data-id="${esc(g.id)}">編集</button></div>
-        <p class="small muted" style="margin:0 0 8px">${esc(g.targetDate)}までに ${esc(yen(p.target))}（あと${p.years.toFixed(1)}年）</p>
+        <p class="small muted" style="margin:0 0 8px">${esc(goalPeriodText(g, p))}</p>
         <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p.progress * 100)}" aria-label="進捗"><div style="width:${(p.progress * 100).toFixed(1)}%"></div></div>
         <div class="row between small" style="margin:4px 0 12px"><span class="num">現在 ${esc(yen(p.current))}</span><span class="num">${Math.round(p.progress * 100)}%</span></div>
         <div class="tiles">
@@ -633,7 +642,7 @@
           <div class="tile"><div class="label">このペースだと期日に</div><div class="value num">${esc(yen(p.projected))}</div></div>
         </div>
         ${alertBox(level, `<div>${p.onTrack ? "順調です" : `要調整：月あと <b class="num">${esc(yen(p.gapMonthly))}</b> 貯金を増やす必要があります`}</div>`)}
-        <p class="tiny" style="margin:0">必要額 = （目標金額 − 現在資産）÷ 残り期間。予測ペースは定期収支・生活費・予定から今後12か月の増減を出したもの（着金待ちは含めない）。</p></section>`;
+        <p class="tiny" style="margin:0">必要額 = （目標金額 − 現在資産）÷ 貯め始める日から期日までの期間。予測ペースは定期収支・生活費・予定から今後12か月の増減を出したもの（着金待ちは含めない）。</p></section>`;
     });
     return html;
   };
@@ -760,12 +769,16 @@
 
   const sheet = $("#sheet");
   let sheetSubmit = null;
+  let sheetOnInput = null;
+  $("#sheetBody").addEventListener("input", () => sheetOnInput && sheetOnInput());
+  $("#sheetBody").addEventListener("change", () => sheetOnInput && sheetOnInput());
 
   const openSheet = (title, body, onSubmit) => {
     $("#sheetTitle").textContent = title;
     $("#sheetBody").innerHTML = body;
     enhanceCalc($("#sheetBody"));
     sheetSubmit = onSubmit;
+    sheetOnInput = null;
     if (typeof sheet.showModal === "function") sheet.showModal();
     else sheet.setAttribute("open", "");
     const first = $("#sheetBody input:not([type=checkbox]):not([type=hidden]), #sheetBody select");
@@ -1085,30 +1098,80 @@
       commit();
     } };
     const ids = g ? g.accountIds || [] : [];
+    const birthday = state.settings.birthday || "";
+    const byDateOnly = g && !g.targetAge && g.targetDate;
     openSheet(g ? "目標を編集" : "目標を追加", `<div style="display:grid;gap:14px">
-      <label class="field">目標名<input name="label" value="${esc(g ? g.label : "")}" placeholder="例: 30歳までに800万円" required></label>
-      <div class="grid2"><label class="field">目標金額<input name="targetAmount" inputmode="numeric" value="${esc(g ? g.targetAmount : "")}" placeholder="8000000" required></label>
-      <label class="field">期日<input type="date" name="targetDate" value="${esc(g ? g.targetDate : "")}" required></label></div>
+      <div class="grid2"><label class="field">目標金額<input name="targetAmount" inputmode="numeric" value="${esc(g ? g.targetAmount : "")}" placeholder="例: 800万" required></label>
+      <label class="field">目標名（空欄なら自動）<input name="label" value="${esc(g ? g.label : "")}" placeholder="30歳までに800万円"></label></div>
+      <div class="grid2 collapse"><label class="field">誕生日<input type="date" name="birthday" value="${esc(birthday)}"></label>
+      <label class="field">何歳まで<input type="number" name="targetAge" min="1" max="120" value="${esc(g && g.targetAge ? g.targetAge : byDateOnly ? "" : 30)}" placeholder="30"></label></div>
+      <label class="field">いつから貯め始める<input type="date" name="startDate" value="${esc(g && g.startDate ? g.startDate : today())}"></label>
+      <details ${byDateOnly ? "open" : ""}><summary>年齢ではなく日付で期日を指定する</summary>
+        <label class="field" style="margin-top:8px">期日（「何歳まで」を空欄にしたときに使います）<input type="date" name="targetDate" value="${esc(g && g.targetDate ? g.targetDate : "")}"></label></details>
+      <div class="card" style="padding:12px;background:var(--surface-2)" id="goalPreview" aria-live="polite"></div>
       <label class="check"><input type="checkbox" name="includeWindfall" ${g && g.includeWindfall ? "checked" : ""}> 臨時収入（FXの利益など）もペースに含める</label>
       <fieldset style="border:1px solid var(--border);border-radius:10px;padding:10px 12px"><legend class="small muted">対象の口座（未選択なら合計対象の口座すべて）</legend>
       ${state.accounts.map((a) => `<label class="check"><input type="checkbox" name="acc" value="${esc(a.id)}" ${ids.includes(a.id) ? "checked" : ""}> ${esc(a.name)}</label>`).join("")}</fieldset>
       <label class="field">月の貯金ペースを手入力（空欄なら予測から自動）<input name="manual" inputmode="numeric" value="${esc(g && g.manualMonthlyPace !== null && g.manualMonthlyPace !== undefined ? g.manualMonthlyPace : "")}"></label>
       ${foot(!!g)}</div>`, (fd) => {
-      const target = money(fd.get("targetAmount"));
-      if (Number.isNaN(target) || !fd.get("targetDate")) return false;
-      const manualRaw = String(fd.get("manual") || "").trim();
-      const data = {
-        label: fd.get("label"),
-        targetAmount: target,
-        targetDate: fd.get("targetDate"),
-        includeWindfall: fd.get("includeWindfall") === "on",
-        accountIds: fd.getAll("acc"),
-        manualMonthlyPace: manualRaw === "" ? null : money(manualRaw),
-      };
+      const data = readGoalForm(fd);
+      if (Number.isNaN(data.targetAmount) || data.targetAmount <= 0) return toast("目標金額を入力してください"), false;
+      if (data.targetAge && !data.birthday) return toast("「何歳まで」を使うときは誕生日を入れてください"), false;
+      if (!data.targetDate) return toast("「何歳まで」か期日を入れてください"), false;
+      if (data.targetDate <= today()) return toast("期日が過ぎています。年齢か期日を確認してください"), false;
+      if (data.birthday) state.settings.birthday = data.birthday;
+      delete data.birthday;
       if (g) Object.assign(g, data);
       else state.goals.push(Object.assign({ id: K.uid("goal") }, data));
       commit();
     });
+    sheetOnInput = () => updateGoalPreview();
+    updateGoalPreview();
+  };
+
+  const readGoalForm = (fd) => {
+    const targetAmount = money(fd.get("targetAmount"));
+    const birthday = fd.get("birthday") || "";
+    const targetAge = Number(fd.get("targetAge")) || null;
+    const goal = {
+      targetAmount,
+      targetAge,
+      startDate: fd.get("startDate") || "",
+      includeWindfall: fd.get("includeWindfall") === "on",
+      accountIds: fd.getAll("acc"),
+      birthday,
+    };
+    goal.targetDate = K.goalTargetDate(goal, {}) || fd.get("targetDate") || "";
+    const manualRaw = String(fd.get("manual") || "").trim();
+    goal.manualMonthlyPace = manualRaw === "" ? null : money(manualRaw);
+    const man = targetAmount >= 10000 && targetAmount % 10000 === 0 ? `${(targetAmount / 10000).toLocaleString("ja-JP")}万円` : yen(targetAmount);
+    goal.label = String(fd.get("label") || "").trim() || (targetAge ? `${targetAge}歳までに${man}` : `${goal.targetDate}までに${man}`);
+    return goal;
+  };
+
+  // 入力中に「○歳の誕生日＝いつ」「月いくら必要か」を表示する
+  const updateGoalPreview = () => {
+    const box = $("#goalPreview");
+    if (!box) return;
+    const g = readGoalForm(new FormData($("#sheetForm")));
+    if (g.targetAge && !g.birthday) {
+      box.innerHTML = `<p class="small" style="margin:0">誕生日を入れると期日を計算します</p>`;
+      return;
+    }
+    if (!g.targetDate) {
+      box.innerHTML = `<p class="small" style="margin:0">「何歳まで」か期日を入れてください</p>`;
+      return;
+    }
+    if (g.targetDate <= today()) {
+      box.innerHTML = `<p class="small" style="margin:0;color:var(--critical)">期日（${esc(g.targetDate)}）が過ぎています</p>`;
+      return;
+    }
+    const p = K.goalPlan(Object.assign({}, state, { settings: Object.assign({}, state.settings, { birthday: g.birthday }) }), g, { today: today() });
+    const amountOk = !Number.isNaN(g.targetAmount) && g.targetAmount > 0;
+    box.innerHTML = `<div class="small" style="display:grid;gap:4px">
+      <div><b>${esc(goalPeriodText(g, p))}</b></div>
+      ${amountOk ? `<div>必要な貯金額 <b class="num">${esc(yen(p.requiredMonthly))}/月</b>（年 <span class="num">${esc(yen(p.requiredYearly))}</span>）</div>
+      <div class="muted">現在の資産 ${esc(yen(p.current))} ・ あと ${esc(yen(p.remaining))}</div>` : `<div class="muted">目標金額を入れると必要額を計算します</div>`}</div>`;
   };
 
   const catSheet = (c) => {
@@ -1173,7 +1236,8 @@
     tx(20, -38000, "退去費", "cat_extra", bank, "planned");
     tx(45, -25000, "旅行代", "cat_extra", bank, "planned");
     K.addTransfer(s, { fromId: fx, toId: bank, amount: 50000, date: D.addDays(t, 3), status: "pending", label: "FX出金" });
-    s.goals.push({ id: K.uid("goal"), label: "30歳までに800万円", targetAmount: 8000000, targetDate: `${Number(t.slice(0, 4)) + 4}-03-31`, includeWindfall: false, accountIds: [], manualMonthlyPace: null });
+    s.settings.birthday = `${Number(t.slice(0, 4)) - 26}-03-31`;
+    s.goals.push({ id: K.uid("goal"), label: "30歳までに800万円", targetAmount: 8000000, targetAge: 30, startDate: t, targetDate: `${Number(t.slice(0, 4)) + 4}-03-31`, includeWindfall: false, accountIds: [], manualMonthlyPace: null });
     const firstOf = (n) => `${D.addMonths(t, n).slice(0, 7)}-01`;
     const lastPay = K.nextPayday(s.settings, firstOf(-1));
     const prevPay = K.nextPayday(s.settings, firstOf(-2));
