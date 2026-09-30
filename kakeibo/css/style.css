@@ -255,6 +255,16 @@ input, select, textarea {
   min-width: 0;
 }
 input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); }
+/* iPhone Safari の日付欄は既定の最小幅で枠からはみ出すので、幅を親に合わせる */
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  min-height: 44px;
+  text-align: left;
+}
+input[type="date"]::-webkit-date-and-time-value { text-align: left; }
+label.field, .grid2 > * { min-width: 0; }
 input.amount { font-size: 26px; font-weight: 700; text-align: right; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 420px) { .grid2.collapse { grid-template-columns: 1fr; } }
