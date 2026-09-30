@@ -652,6 +652,49 @@
     };
   };
 
+  /* ---------- 稼ぐ目安カレンダー ---------- */
+
+  // 平日（土日・祝日・会社の休み以外）
+  const isWorkday = (state, date) => !D.isDayOff(date, state.settings.extraHolidays || []);
+
+  /**
+   * 目標に届くには、平日1日あたりあといくら稼げばいいか（month は "YYYY-MM"）
+   * 不足額（必要な月の貯金 − 今のペース）をその月の平日数で割る。
+   * 給与明細があれば、控除率で額面に戻し、残業1時間あたりの手当で「残業何時間分」かも出す
+   */
+  const earningsCalendar = (state, goal, opts = {}) => {
+    const today = opts.today || D.today();
+    const month = opts.month || today.slice(0, 7);
+    const plan = opts.plan || goalPlan(state, goal, { today });
+    const first = `${month}-01`;
+    const last = D.endOfMonth(first);
+    const days = [];
+    for (let d = first; d <= last; d = D.addDays(d, 1)) {
+      const inPeriod = d >= plan.startDate && d <= plan.targetDate;
+      days.push({ date: d, workday: isWorkday(state, d) && inPeriod, holiday: D.holidayName(d), dayOff: !isWorkday(state, d), past: d < today, today: d === today, inPeriod });
+    }
+    // 1日あたりの目安がぶれないよう、その月の平日すべてで割る（過去の日・期間外の日は表示しないだけ）
+    const workdays = days.filter((x) => !x.dayOff).length;
+    days.forEach((x) => (x.target = x.workday && !x.past));
+    const gap = plan.gapMonthly;
+    const perDayNet = workdays ? Math.ceil(gap / workdays) : 0;
+    const slips = sortedPayslips(state);
+    const last2 = slips[slips.length - 1];
+    const deductionRate = last2 && Number(last2.gross) ? (Number(last2.deductions) || 0) / Number(last2.gross) : null;
+    const perDayGross = deductionRate !== null && deductionRate < 1 ? Math.ceil(perDayNet / (1 - deductionRate)) : null;
+    const rate = overtimeRate(slips);
+    const perDayHours = rate && perDayGross !== null ? Math.ceil((perDayGross / rate.average) * 10) / 10 : null;
+    // 目標に必要な1日あたりの貯金（平日で割った目安。不足がないときの参考）
+    const perDaySaving = workdays ? Math.ceil(plan.requiredMonthly / workdays) : 0;
+    return {
+      month, first, last, days, workdays, gapMonthly: gap, perDayNet, perDayGross, perDayHours, perDaySaving,
+      deductionRate, overtimeRate: rate ? rate.average : null, onTrack: plan.onTrack, plan,
+      prevMonth: D.addMonths(first, -1).slice(0, 7), nextMonth: D.addMonths(first, 1).slice(0, 7),
+      hasPrev: first > `${plan.startDate.slice(0, 7)}-01` && first > `${today.slice(0, 7)}-01`,
+      hasNext: last < plan.targetDate,
+    };
+  };
+
   /* ---------- カテゴリ別集計 ---------- */
 
   const categorySummary = (state, start, end, opts = {}) => {
@@ -760,7 +803,7 @@
     addTransfer, removeTransfer, setTransferStatus, completeTransfer, inFlightTotal,
     expandRecurrence, nextPayday, collectEvents, forecast, hasInFlightInScope, resolveScope,
     sortedPayslips, overtimeRate, estimateNextPay,
-    ageOn, birthdayAtAge, goalTargetDate, goalPlan, categorySummary, windfallOfYear, alerts,
+    ageOn, birthdayAtAge, goalTargetDate, goalPlan, earningsCalendar, isWorkday, categorySummary, windfallOfYear, alerts,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

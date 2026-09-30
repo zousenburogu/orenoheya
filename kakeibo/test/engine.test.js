@@ -351,3 +351,41 @@ test("着金したら着金待ちの比較は出なくなる（残高更新済�
   assert.equal(K.accountById(s2, "bank").balance, 130000);
   assert.equal(K.hasInFlightInScope(s2, "total"), false);
 });
+
+test("稼ぐ目安カレンダー：不足額を平日数で割り、額面・残業時間に換算", () => {
+  const s = setup();
+  s.payslips.push({ payDate: "2026-09-25", gross: 300000, deductions: 60000, net: 240000, overtimeHours: 20, overtimePay: 50000 });
+  const goal = { targetAmount: 8000000, targetDate: "2030-05-12", accountIds: [], manualMonthlyPace: 100000 };
+  const plan = K.goalPlan(s, goal, { today: "2026-09-30" });
+  const cal = K.earningsCalendar(s, goal, { today: "2026-09-30", month: "2026-10", plan });
+  // 2026年10月の平日：31日 − 土日9日 − スポーツの日(10/12) = 21日
+  assert.equal(cal.workdays, 21);
+  assert.equal(cal.gapMonthly, plan.gapMonthly);
+  assert.equal(cal.perDayNet, Math.ceil(plan.gapMonthly / 21));
+  assert.equal(cal.perDayGross, Math.ceil(cal.perDayNet / 0.8)); // 控除率20%
+  assert.equal(cal.overtimeRate, 2500);
+  assert.equal(cal.perDayHours, Math.ceil((cal.perDayGross / 2500) * 10) / 10);
+  assert.equal(cal.days.find((d) => d.date === "2026-10-12").workday, false);
+  assert.equal(cal.hasPrev, true); // 10月からは今月（9月）に戻れる
+  assert.equal(cal.hasNext, true);
+  assert.equal(K.earningsCalendar(s, goal, { today: "2026-09-30", month: "2026-09", plan }).hasPrev, false);
+  // 給与明細がなければ額面・時間は出さない
+  const s2 = setup();
+  const cal2 = K.earningsCalendar(s2, goal, { today: "2026-09-30", month: "2026-10" });
+  assert.equal(cal2.perDayGross, null);
+  assert.equal(cal2.perDayHours, null);
+  // 期日より後の平日は数えない
+  const cal3 = K.earningsCalendar(s, goal, { today: "2026-09-30", month: "2030-05" });
+  assert.equal(cal3.days.find((d) => d.date === "2030-05-13").workday, false);
+  assert.equal(cal3.hasNext, false);
+});
+
+test("稼ぐ目安カレンダー：今月は月の平日すべてで割る（残り1日に不足を詰め込まない）", () => {
+  const s = setup();
+  const goal = { targetAmount: 8000000, targetDate: "2030-05-12", startDate: "2026-09-30", accountIds: [], manualMonthlyPace: 100000 };
+  const cal = K.earningsCalendar(s, goal, { today: "2026-09-30", month: "2026-09" });
+  // 2026年9月の平日：30日 − 土日8日 − 祝日3日(21,22,23) = 19日
+  assert.equal(cal.workdays, 19);
+  assert.equal(cal.perDayNet, Math.ceil(cal.gapMonthly / 19));
+  assert.deepEqual(cal.days.filter((d) => d.target).map((d) => d.date), ["2026-09-30"]);
+});

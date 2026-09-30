@@ -218,7 +218,7 @@
     if (state.goals.length) {
       const g = state.goals[0];
       const p = K.goalPlan(state, g, { today: t });
-      html += `<section class="card"><div class="row between"><h3>${esc(g.label || "目標")}</h3><button class="link small" data-sub-go="goals">目標 ›</button></div>
+      html += `<section class="card"><div class="row between"><h3>${esc(g.label || "目標")}</h3><span class="row" style="gap:12px"><button class="link small" data-action="earncal" data-id="${esc(g.id)}">📅 稼ぐ目安</button><button class="link small" data-sub-go="goals">目標 ›</button></span></div>
         <div class="row between small"><span class="num">${esc(yen(p.current))} / ${esc(yen(p.target))}</span><span class="num">${Math.round(p.progress * 100)}%</span></div>
         <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(p.progress * 100)}" aria-label="目標の進捗"><div style="width:${(p.progress * 100).toFixed(1)}%"></div></div>
         <p class="small" style="margin:8px 0 0">${p.onTrack ? `${ICONS.good.replace('class="icon"', 'class="icon" style="width:14px;height:14px;vertical-align:-2px;color:var(--good)"')} 順調` : `要調整：月あと ${esc(yen(p.gapMonthly))} の上積みが必要`}<span class="muted">（必要 ${esc(yen(p.requiredMonthly))}/月・ペース ${esc(yen(p.pace))}/月）</span></p>
@@ -658,8 +658,73 @@
           <div class="tile"><div class="label">このペースだと期日に</div><div class="value num">${esc(yen(p.projected))}</div></div>
         </div>
         ${alertBox(level, `<div>${p.onTrack ? "順調です" : `要調整：月あと <b class="num">${esc(yen(p.gapMonthly))}</b> 貯金を増やす必要があります`}</div>`)}
+        <button style="width:100%;margin-bottom:10px" data-action="earncal" data-id="${esc(g.id)}">📅 平日にいくら稼げば届くか（カレンダー）</button>
         <p class="tiny" style="margin:0">必要額 = （目標金額 − 現在資産）÷ 貯め始める日から期日までの期間。予測ペースは定期収支・生活費・予定から今後12か月の増減を出したもの${K.inFlightTotal(state, "total") ? "（着金待ちは含めない）" : ""}。</p></section>`;
     });
+    return html;
+  };
+
+  /* ---------- 画面: 稼ぐ目安カレンダー ---------- */
+
+  const viewEarnCal = () => {
+    if (!state.goals.length) return `<div class="card empty"><p>先に目標を登録してください。</p><button class="primary" data-sub-go="goals">目標へ</button></div>`;
+    const t = today();
+    const g = state.goals.find((x) => x.id === ui.calGoalId) || state.goals[0];
+    const plan = K.goalPlan(state, g, { today: t });
+    let month = ui.calMonth || t.slice(0, 7);
+    if (month < t.slice(0, 7)) month = t.slice(0, 7);
+    const cal = K.earningsCalendar(state, g, { today: t, month, plan });
+    const [y, m] = month.split("-").map(Number);
+    const short = (n) => Math.round(n).toLocaleString("ja-JP");
+
+    let html = "";
+    if (state.goals.length > 1) {
+      html += `<section><label class="field">目標<select data-bind="calGoalId">${state.goals.map((x) => `<option value="${esc(x.id)}" ${x.id === g.id ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label></section>`;
+    }
+    html += `<section class="card"><h3>${esc(g.label)}</h3>
+      <div class="tiles" style="margin-top:8px">
+        <div class="tile"><div class="label">必要な貯金</div><div class="value num">${esc(yen(plan.requiredMonthly))}<span class="small">/月</span></div></div>
+        <div class="tile"><div class="label">今のペース</div><div class="value num">${esc(yen(plan.pace))}<span class="small">/月</span></div></div>
+        <div class="tile"><div class="label">不足</div><div class="value num">${esc(yen(plan.gapMonthly))}<span class="small">/月</span></div></div>
+      </div>
+      ${plan.onTrack
+        ? alertBox("good", `<div>今のペースで届きます。上乗せで稼ぐ必要はありません（参考：必要な貯金は平日1日あたり ${esc(yen(cal.perDaySaving))}）</div>`)
+        : alertBox("warning", `<div>${y}年${m}月は平日 ${cal.workdays}日。<b>平日1日あたり手取りで <span class="num">${esc(yen(cal.perDayNet))}</span></b> 多く稼げば届きます${cal.perDayGross !== null ? `（額面 <span class="num">${esc(yen(cal.perDayGross))}</span>${cal.perDayHours !== null ? `・残業 約<b class="num">${cal.perDayHours}</b>時間` : ""}）` : ""}</div>`)}
+    </section>`;
+
+    html += `<section class="card">
+      <div class="row between" style="margin-bottom:8px">
+        <button class="small ghost" data-action="cal-month" data-key="${cal.prevMonth}" ${cal.hasPrev ? "" : "disabled"} aria-label="前の月">‹</button>
+        <b>${y}年${m}月</b>
+        <button class="small ghost" data-action="cal-month" data-key="${cal.nextMonth}" ${cal.hasNext ? "" : "disabled"} aria-label="次の月">›</button>
+      </div>
+      <div class="cal" role="grid" aria-label="${y}年${m}月の稼ぐ目安">
+        ${D.WEEK.map((w) => `<div class="cal-head">${w}</div>`).join("")}
+        ${'<div class="cal-cell blank"></div>'.repeat(D.dow(cal.first))}
+        ${cal.days.map((d) => {
+          const day = Number(d.date.slice(8));
+          const cls = ["cal-cell", d.dayOff ? "off" : "work", d.past || !d.inPeriod ? "past" : "", d.today ? "today" : ""].join(" ");
+          let inner = "";
+          if (d.target && !plan.onTrack) {
+            inner = `<span class="cal-amt num">${short(cal.perDayNet)}</span>${cal.perDayHours !== null ? `<span class="cal-sub num">${cal.perDayHours}h</span>` : ""}`;
+          } else if (d.target) {
+            inner = `<span class="cal-sub">✓</span>`;
+          } else if (d.holiday) {
+            inner = `<span class="cal-sub ellipsis">${esc(d.holiday)}</span>`;
+          }
+          const label = `${D.dayLabelLong(d.date)}${d.holiday ? ` ${d.holiday}` : ""}${d.target && !plan.onTrack ? ` 手取り${yen(cal.perDayNet)}${cal.perDayHours !== null ? `・残業約${cal.perDayHours}時間` : ""}` : d.dayOff ? " 休み" : ""}`;
+          return `<div class="${cls}" role="gridcell" aria-label="${esc(label)}"><span class="cal-day num">${day}</span>${inner}</div>`;
+        }).join("")}
+      </div>
+      <p class="tiny" style="margin:10px 0 0">${plan.onTrack ? "✓ はその日の上乗せが不要な平日。" : `数字は平日1日あたり上乗せで必要な手取り（円）${cal.perDayHours !== null ? "、h は残業時間の目安" : ""}。`}灰色は土日・祝日・会社の休み（休日は「生活費の設定」で追加できます）。</p>
+    </section>`;
+
+    html += `<section class="card"><h3>計算のしかた</h3><ul class="small" style="margin:0;padding-left:18px;display:grid;gap:4px">
+      <li>不足 ＝ 必要な貯金（月） − 今のペース（月）＝ <span class="num">${esc(yen(plan.gapMonthly))}</span></li>
+      <li>平日1日あたり ＝ 不足 ÷ その月の平日数（${cal.workdays}日）</li>
+      ${cal.deductionRate !== null ? `<li>額面 ＝ 手取り ÷ （1 − 控除率 ${(cal.deductionRate * 100).toFixed(1)}%）</li>` : `<li>給与明細を登録すると、額面と残業時間も出ます</li>`}
+      ${cal.overtimeRate ? `<li>残業時間 ＝ 額面 ÷ 残業1時間あたり ${esc(yen(cal.overtimeRate))}</li>` : ""}
+      <li>残業代はふつう翌月の給料で入るので、入金はそのぶん遅れます</li></ul></section>`;
     return html;
   };
 
@@ -778,6 +843,7 @@
     categories: ["カテゴリ", viewCategories],
     settings: ["設定・データ", viewSettings],
     import: ["画像から取り込む", viewImport],
+    earncal: ["稼ぐ目安カレンダー", viewEarnCal],
   };
   const TABS = { home: ["ホーム", viewHome], forecast: ["残高予測", viewForecast], input: ["入力", viewInput], analysis: ["カテゴリ分析", viewAnalysis], menu: ["メニュー", viewMenu] };
 
@@ -1447,6 +1513,18 @@
       );
     },
     "no-spend": () => undoable("今日は「使っていない」にしました", () => K.markNoSpend(state, today())),
+    earncal: (b) => {
+      ui.tab = "menu";
+      ui.sub = "earncal";
+      ui.calGoalId = b.dataset.id || ui.calGoalId;
+      ui.calMonth = today().slice(0, 7);
+      render();
+      window.scrollTo(0, 0);
+    },
+    "cal-month": (b) => {
+      ui.calMonth = b.dataset.key;
+      render();
+    },
     "goal-new": () => goalSheet(null),
     "goal-edit": (b) => goalSheet(state.goals.find((x) => x.id === b.dataset.id)),
     "cat-new": () => catSheet(null),
