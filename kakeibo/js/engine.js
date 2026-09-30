@@ -62,6 +62,72 @@
     return s;
   };
 
+  /* 金額欄の計算式（例: "=1+2", "12,000-3500", "2万+3000", "(1200+800)*3"）を整数の円にする。
+     eval は使わず、四則演算とかっこだけを解釈する。空欄は 0、読めない式は NaN */
+  const evalAmount = (input) => {
+    const src = String(input ?? "")
+      .normalize("NFKC") // 全角数字・記号を半角に
+      .replace(/[−‐ー―]/g, "-")
+      .replace(/×/g, "*")
+      .replace(/÷/g, "/")
+      .replace(/[,\s円¥￥]/g, "")
+      .replace(/^=+|=+$/g, "");
+    if (src === "") return 0;
+    let i = 0;
+    const peek = () => src[i];
+    const number = () => {
+      const m = /^\d+(\.\d+)?|^\.\d+/.exec(src.slice(i));
+      if (!m) throw new Error("number");
+      i += m[0].length;
+      let v = Number(m[0]);
+      if (peek() === "万") { v *= 10000; i++; }
+      else if (peek() === "千") { v *= 1000; i++; }
+      return v;
+    };
+    const factor = () => {
+      const c = peek();
+      if (c === "-") { i++; return -factor(); }
+      if (c === "+") { i++; return factor(); }
+      if (c === "(") {
+        i++;
+        const v = expr();
+        if (peek() !== ")") throw new Error("paren");
+        i++;
+        return v;
+      }
+      return number();
+    };
+    const term = () => {
+      let v = factor();
+      while (peek() === "*" || peek() === "/") {
+        const op = src[i++];
+        const r = factor();
+        if (op === "/" && r === 0) throw new Error("div0");
+        v = op === "*" ? v * r : v / r;
+      }
+      return v;
+    };
+    const expr = () => {
+      let v = term();
+      while (peek() === "+" || peek() === "-") {
+        const op = src[i++];
+        const r = term();
+        v = op === "+" ? v + r : v - r;
+      }
+      return v;
+    };
+    try {
+      const v = expr();
+      if (i !== src.length || !Number.isFinite(v)) return NaN;
+      return Math.round(v);
+    } catch (e) {
+      return NaN;
+    }
+  };
+
+  // 数字だけでなく演算子を含むか（入力欄に計算結果のプレビューを出すかどうか）
+  const isFormula = (input) => /[+\-*/×÷＋－（）()=＝万千]/.test(String(input ?? "").trim().replace(/^[-−]\d[\d,]*$/, ""));
+
   const yen = (n) => {
     const v = Math.round(n || 0);
     return (v < 0 ? "-¥" : "¥") + Math.abs(v).toLocaleString("ja-JP");
@@ -606,7 +672,7 @@
   };
 
   const api = {
-    uid, yen, WINDFALL, TRANSFER_STATUS, IN_FLIGHT,
+    uid, yen, evalAmount, isFormula, WINDFALL, TRANSFER_STATUS, IN_FLIGHT,
     defaultCategories, emptyState, normalizeState,
     accountById, categoryById, totalAccountIds, sumBalances,
     addTransaction, removeTransaction, updateTransaction, confirmTransaction, completeOccurrence,

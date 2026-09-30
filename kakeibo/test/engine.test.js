@@ -252,3 +252,21 @@ test("未来日付の実績（旧データ）：今日の行に表示され、�
   assert.equal(g.days[2].events[0].amount, -25916);
   assert.equal(g.days[2].balance, 144084);
 });
+
+test("金額欄の計算式", () => {
+  const cases = [
+    ["=1+2", 3], ["1+2", 3], ["12,000-3500", 8500], ["=(1200+800)*3", 6000], ["10000/3", 3333],
+    ["２万＋３０００", 23000], ["=１５０００－２５００×２", 10000], ["1.5万", 15000], ["5千", 5000],
+    ["25,916円", 25916], ["¥3,000", 3000], ["-500", -500], ["=-(100+50)", -150], ["300ー100", 200],
+    ["", 0], ["  ", 0], ["=", 0], ["=1+", NaN], ["1/0", NaN], ["abc", NaN], ["(1+2", NaN], ["alert(1)", NaN],
+  ];
+  cases.forEach(([src, want]) => {
+    const got = K.evalAmount(src);
+    if (Number.isNaN(want)) assert.ok(Number.isNaN(got), `${src} -> ${got}`);
+    else assert.equal(got, want, src);
+  });
+  assert.equal(K.isFormula("=1+2"), true);
+  assert.equal(K.isFormula("2万"), true);
+  assert.equal(K.isFormula("25,916"), false);
+  assert.equal(K.isFormula("-500"), false);
+});

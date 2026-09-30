@@ -327,7 +327,7 @@
       ${ui.whatIf.length ? `<ul class="list">${ui.whatIf.map((w) => `<li><span class="date">${esc(D.dayLabelLong(w.date))}</span><div class="grow"><div class="ellipsis">${esc(w.label || "仮の支出")}</div><div class="meta">${esc(accName(w.accountId))}</div></div><span class="amt">${signed(w.amount)}</span>
         <span class="actions"><button class="small" data-action="whatif-save" data-id="${esc(w.id)}">予定に追加</button><button class="small ghost" data-action="whatif-remove" data-id="${esc(w.id)}" aria-label="削除">×</button></span></li>`).join("")}</ul>` : ""}
       <form class="grid2 collapse" data-form="whatif" style="margin-top:8px">
-        <label class="field">金額（支出）<input name="amount" inputmode="numeric" pattern="[0-9,]*" placeholder="30000" required></label>
+        <label class="field">金額（支出）<input name="amount" inputmode="numeric" placeholder="30000" required></label>
         <label class="field">日付<input type="date" name="date" value="${esc(t)}" required></label>
         <label class="field">内容<input name="label" placeholder="イヤホン"></label>
         <label class="field">口座<select name="accountId">${accountOptions(ui.scope !== "total" ? ui.scope : state.settings.livingAccountId || (state.accounts[0] || {}).id)}</select></label>
@@ -403,7 +403,7 @@
 
     if (kind === "transfer") {
       html += `<section class="card"><form class="stack" data-form="transfer">
-        <label class="field">金額<input class="amount num" name="amount" inputmode="numeric" pattern="[0-9,]*" placeholder="0" required></label>
+        <label class="field">金額<input class="amount num" name="amount" inputmode="numeric" placeholder="0" required></label>
         <div class="grid2"><label class="field">出金元<select name="fromId">${accountOptions(d.fromId || state.settings.salaryAccountId)}</select></label>
         <label class="field">入金先<select name="toId">${accountOptions(d.toId || state.settings.livingAccountId || (state.accounts[1] || {}).id)}</select></label></div>
         <div class="grid2"><label class="field">日付（着金予定日）<input type="date" name="date" value="${esc(t)}" required></label>
@@ -418,7 +418,7 @@
         : "";
       const defaultCat = d.categoryId || (kind === "expense" ? "cat_living" : "cat_salary");
       html += `<section class="card"><form class="stack" data-form="tx">
-        <label class="field">金額<input class="amount num" name="amount" inputmode="numeric" pattern="[0-9,]*" placeholder="0" value="${esc(d.amount || "")}" required autofocus></label>
+        <label class="field">金額<input class="amount num" name="amount" inputmode="numeric" placeholder="0" value="${esc(d.amount || "")}" required autofocus></label>
         <div class="field" style="display:grid;gap:6px"><span class="small muted">カテゴリ</span><div class="chips" role="radiogroup">${state.categories
           .filter((c) => c.kind === kind)
           .map((c) => `<label class="chip btn" style="${c.id === defaultCat ? "border-color:var(--accent)" : ""}"><input type="radio" name="categoryId" value="${esc(c.id)}" ${c.id === defaultCat ? "checked" : ""} style="width:auto;accent-color:var(--accent)"> ${esc(c.name)}</label>`)
@@ -704,6 +704,7 @@
       else b.removeAttribute("aria-current");
     });
     app.innerHTML = view();
+    enhanceCalc(app);
     drawCharts();
     saveUi();
   };
@@ -763,6 +764,7 @@
   const openSheet = (title, body, onSubmit) => {
     $("#sheetTitle").textContent = title;
     $("#sheetBody").innerHTML = body;
+    enhanceCalc($("#sheetBody"));
     sheetSubmit = onSubmit;
     if (typeof sheet.showModal === "function") sheet.showModal();
     else sheet.setAttribute("open", "");
@@ -787,10 +789,96 @@
   });
   let sheetActions = {};
 
-  const money = (v) => {
-    const n = Number(String(v ?? "").replace(/[,，円¥\s]/g, "").replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)));
-    return Number.isFinite(n) ? Math.round(n) : NaN;
+  // 金額欄は「=1+2」「2万+3000」のような計算式も受け付ける
+  const money = (v) => K.evalAmount(v);
+
+  /* ---------- 金額欄の計算 ---------- */
+
+  const CALC_KEYS = [["+", "＋"], ["-", "−"], ["*", "×"], ["/", "÷"], ["(", "("], [")", ")"]];
+
+  const enhanceCalc = (root) => {
+    root.querySelectorAll('input[inputmode="numeric"]:not([data-calc])').forEach((input) => {
+      input.dataset.calc = "1";
+      input.setAttribute("autocomplete", "off");
+      const hint = document.createElement("div");
+      hint.className = "calc-hint num";
+      hint.setAttribute("aria-live", "polite");
+      const tools = document.createElement("div");
+      tools.className = "calc-tools";
+      tools.setAttribute("role", "group");
+      tools.setAttribute("aria-label", "計算キー");
+      CALC_KEYS.forEach(([op, label]) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "small";
+        b.dataset.calcOp = op;
+        b.textContent = label;
+        b.setAttribute("aria-label", `${label} を入力`);
+        tools.appendChild(b);
+      });
+      const eq = document.createElement("button");
+      eq.type = "button";
+      eq.className = "small primary";
+      eq.dataset.calcOp = "=";
+      eq.textContent = "＝";
+      eq.setAttribute("aria-label", "計算する");
+      tools.appendChild(eq);
+      input.after(hint, tools);
+    });
   };
+
+  const updateCalcHint = (input) => {
+    const hint = input.parentElement.querySelector(".calc-hint");
+    if (!hint) return;
+    if (!K.isFormula(input.value)) {
+      hint.textContent = "";
+      return;
+    }
+    const v = K.evalAmount(input.value);
+    hint.textContent = Number.isNaN(v) ? "式を確認してください" : `= ${yen(v)}`;
+    hint.classList.toggle("bad", Number.isNaN(v));
+  };
+
+  // 計算式を結果の数字に置き換える（欄から離れたとき・＝キー）
+  const applyCalc = (input) => {
+    if (!K.isFormula(input.value)) return;
+    const v = K.evalAmount(input.value);
+    if (Number.isNaN(v)) return;
+    const hint = input.parentElement.querySelector(".calc-hint");
+    const expr = input.value.trim().replace(/^[=＝]/, "");
+    input.value = String(v);
+    if (hint) {
+      hint.textContent = `${expr} = ${yen(v)}`;
+      hint.classList.remove("bad");
+    }
+  };
+
+  document.addEventListener("input", (e) => {
+    if (e.target.dataset && e.target.dataset.calc) updateCalcHint(e.target);
+  });
+  document.addEventListener("focusout", (e) => {
+    if (e.target.dataset && e.target.dataset.calc) applyCalc(e.target);
+  });
+  // 計算キーを押しても入力欄からフォーカスを外さない（スマホのキーボードを閉じない）
+  document.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("[data-calc-op]")) e.preventDefault();
+  });
+  document.addEventListener("click", (e) => {
+    const key = e.target.closest("[data-calc-op]");
+    if (!key) return;
+    const input = key.parentElement.parentElement.querySelector("input[data-calc]");
+    if (!input) return;
+    if (key.dataset.calcOp === "=") {
+      applyCalc(input);
+    } else {
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? input.value.length;
+      input.value = input.value.slice(0, start) + key.dataset.calcOp + input.value.slice(end);
+      input.setSelectionRange(start + 1, start + 1);
+      updateCalcHint(input);
+    }
+    input.focus();
+  }, true);
 
   const foot = (del) =>
     `<div class="sheet-foot">${del ? `<button type="submit" class="danger ghost" data-sheet-action="delete" formnovalidate style="margin-right:auto">削除</button>` : ""}<button type="submit" class="primary">保存</button></div>`;
