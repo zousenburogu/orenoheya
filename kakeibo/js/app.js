@@ -758,9 +758,7 @@
           <div class="grid2"><label class="field">通知する時刻<input type="time" name="reminderTime" value="${esc(s.reminderTime || "")}"></label>
           <button type="submit" style="align-self:end">保存</button></div>
         </form>
-        <p class="small" style="margin:10px 0 6px"><b>iPhoneに毎日通知する</b>：下のボタンからカレンダーに「家計簿を記入」の予定（毎日・通知付き）を追加します。アプリを閉じていても通知されます。</p>
-        <button class="primary" data-action="reminder-ics">${esc(s.reminderTime || "21:00")}の通知をカレンダーに追加</button>
-        <p class="tiny" style="margin:8px 0 0">カレンダーの通知は記録済みの日も届きます（カレンダーからはアプリの中身が見えないため）。記録済みなら無視してください。アプリを開いたときは、指定の時刻を過ぎて今日の記録がなければホームに知らせが出ます。止めたいときはカレンダーの予定を削除してください。</p></section>
+        <p class="tiny" style="margin:8px 0 0">指定の時刻を過ぎて今日の記録がないと、ホームに知らせが出ます（アプリを開いたまま時刻になったときも）。アプリを閉じているときの通知は、iPhone のリマインダーアプリで「毎日・この時刻」の繰り返しを登録してください。空欄で保存するとオフになります。</p></section>
       <section class="card"><h3>データ</h3><p class="tiny">データはこの端末のブラウザ内にだけ保存されます。機種変更やブラウザのデータ削除に備えて、ときどき書き出してください。</p>
       <div class="row wrap"><button data-action="export">JSONを書き出す</button><label class="btn" style="display:inline-flex;align-items:center">JSONを読み込む<input type="file" accept="application/json,.json" data-action="import" hidden></label>
       <button data-action="sample">サンプルデータを読み込む</button><button class="danger" data-action="reset">すべて削除</button></div></section>
@@ -1424,34 +1422,6 @@
       );
     },
     "no-spend": () => undoable("今日は「使っていない」にしました", () => K.markNoSpend(state, today())),
-    "reminder-ics": () => {
-      const time = state.settings.reminderTime || "21:00";
-      if (location.protocol !== "file:" && time === "21:00") {
-        // 21:00 はサイトに置いた .ics を開く（iPhone の Safari ではそのまま「カレンダーに追加」画面になる）
-        location.href = "reminder-2100.ics";
-        return;
-      }
-      const [h, m] = time.split(":").map(Number);
-      const start = new Date();
-      start.setHours(h, m, 0, 0);
-      const z = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-      const url = location.protocol === "file:" ? "" : location.href.split(/[?#]/)[0];
-      const ics = [
-        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//zousenburogu//kakeibo//JA", "METHOD:PUBLISH",
-        "BEGIN:VEVENT", `UID:kakeibo-daily-reminder-${time.replace(":", "")}@kakeibo`, `DTSTAMP:${z(new Date())}`,
-        `DTSTART:${z(start)}`, "DURATION:PT5M", "RRULE:FREQ=DAILY", "SUMMARY:家計簿を記入",
-        `DESCRIPTION:今日の支出を家計簿に記録しましょう。記録済みなら無視してOK。${url ? `\\n${url}` : ""}`,
-        ...(url ? [`URL:${url}`] : []), "TRANSP:TRANSPARENT",
-        "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:家計簿を記入", "TRIGGER:PT0M", "END:VALARM",
-        "END:VEVENT", "END:VCALENDAR", "",
-      ].join("\r\n");
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
-      a.download = `kakeibo-reminder-${time.replace(":", "")}.ics`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-      toast("ダウンロードしたファイルを開いて、カレンダーに追加してください");
-    },
     "goal-new": () => goalSheet(null),
     "goal-edit": (b) => goalSheet(state.goals.find((x) => x.id === b.dataset.id)),
     "cat-new": () => catSheet(null),
@@ -1700,7 +1670,7 @@
 
   /* ---------- 開いている間のリマインダー ---------- */
 
-  // アプリを開いたまま指定時刻になったら、今日の記録がなければ知らせる（閉じているときはカレンダーの通知に任せる）
+  // アプリを開いたまま指定時刻になったら、今日の記録がなければ知らせる（閉じているときは iPhone のリマインダーに任せる）
   let reminderTimer = null;
   const scheduleReminder = () => {
     clearTimeout(reminderTimer);
