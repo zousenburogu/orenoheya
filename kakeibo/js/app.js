@@ -3,6 +3,7 @@
   "use strict";
 
   const K = window.Kakeibo;
+  const I = window.KImport;
   const D = window.KDates;
   const C = window.KChart;
   const yen = K.yen;
@@ -70,9 +71,9 @@
   // 操作前の状態を覚えておき、トーストの「元に戻す」で丸ごと復元する
   const undoable = (msg, fn) => {
     const before = JSON.stringify(state);
-    fn();
+    const result = fn();
     commit();
-    toast(msg, () => {
+    toast(typeof msg === "function" ? msg(result) : msg, () => {
       state = K.normalizeState(JSON.parse(before));
       commit();
       toast("元に戻しました");
@@ -399,7 +400,8 @@
     let html = `<section><div class="seg" role="group" aria-label="入力の種類">
       <button aria-pressed="${kind === "expense"}" data-action="kind" data-key="expense">支出</button>
       <button aria-pressed="${kind === "income"}" data-action="kind" data-key="income">収入</button>
-      <button aria-pressed="${kind === "transfer"}" data-action="kind" data-key="transfer">振替</button></div></section>`;
+      <button aria-pressed="${kind === "transfer"}" data-action="kind" data-key="transfer">振替</button></div></section>
+      <section><button class="chip" data-sub-go="import" style="width:100%;justify-content:center">📷 画像から取り込む（レシート・残高・請求・給与明細）</button></section>`;
 
     if (kind === "transfer") {
       html += `<section class="card"><form class="stack" data-form="transfer">
@@ -518,6 +520,7 @@
     ["goals", "目標", "必要な月間貯金額"],
     ["living", "生活費の設定", "平日・休日の単価、雑費枠"],
     ["categories", "カテゴリ", "色・比較基準"],
+    ["import", "画像から取り込む", "レシート・残高・請求・給与明細"],
     ["settings", "設定・データ", "給料日・通知・バックアップ"],
   ];
 
@@ -674,6 +677,61 @@
         <button class="small ghost" data-action="cat-edit" data-id="${esc(c.id)}">編集</button></li>`)
       .join("")}</ul></section>`).join("")}`;
 
+  /* ---------- 画面: 画像から取り込む ---------- */
+
+  const IMPORT_TYPE_LABEL = { expense: "支出", income: "収入", balance: "残高", bill: "請求", payslip: "給与明細" };
+
+  const importRowHtml = (r, i) => {
+    const f = (field) => `data-imp="${field}" data-i="${i}"`;
+    const warn = r.warnings.length ? `<ul class="tiny" style="margin:6px 0 0;padding-left:18px;color:var(--critical)">${r.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : "";
+    let body = "";
+    if (r.type === "payslip") {
+      const net = (r.gross || 0) - (r.deductions || 0);
+      body = `<div class="small num">支給 ${esc(yen(r.gross))} − 控除 ${esc(yen(r.deductions))} ＝ <b>手取り ${esc(yen(net))}</b>${r.overtimeHours ? `・残業 ${esc(r.overtimeHours)}h / ${esc(yen(r.overtimePay))}` : ""}</div>
+        <div class="grid2" style="margin-top:8px"><label class="field">支給日<input type="date" value="${esc(r.date)}" ${f("date")}></label><span></span></div>
+        <label class="check small" style="margin-top:6px"><input type="checkbox" ${r.recordNet !== false ? "checked" : ""} ${f("recordNet")} ${state.settings.salaryAccountId ? "" : "disabled"}> 手取りを給与口座に入金として記録（同じ頃の給与の記録があれば二重にしません）</label>`;
+    } else {
+      const catKind = r.type === "income" ? "income" : "expense";
+      body = `<div class="grid2">
+          <label class="field">日付<input type="date" value="${esc(r.date)}" ${f("date")}></label>
+          <label class="field">${r.type === "balance" ? "残高" : "金額"}<input inputmode="numeric" value="${esc(r.amount)}" ${f("amount")}></label>
+        </div>
+        <div class="grid2" style="margin-top:8px">
+          <label class="field">口座<select ${f("accountId")}>${r.type === "balance" && !r.accountId ? '<option value="">（選んでください）</option>' : ""}${accountOptions(r.accountId)}</select></label>
+          ${r.type === "balance" ? `<span class="tiny" style="align-self:end">今の残高 ${esc(yen((K.accountById(state, r.accountId) || {}).balance || 0))} → 差額は「残高調整」で記録</span>`
+            : r.type === "bill" && r.match && r.useMatch !== false ? "<span></span>"
+            : `<label class="field">カテゴリ<select ${f("categoryId")}>${categoryOptions(catKind, r.categoryId)}</select></label>`}
+        </div>
+        ${r.type === "bill" && r.match ? `<label class="check small" style="margin-top:6px"><input type="checkbox" ${r.useMatch !== false ? "checked" : ""} ${f("useMatch")}> 定期ルール「${esc(r.match.label)}」の${esc(D.dayLabel(r.match.original))}分の金額として登録</label>` : ""}
+        ${r.type === "bill" && !r.match ? `<p class="tiny" style="margin:6px 0 0">一致する定期ルールがないので、単発の${r.date > today() ? "予定" : "支出"}として登録します</p>` : ""}`;
+    }
+    const title = r.type === "payslip" ? "給与明細" : r.type === "balance" ? "残高の更新" : r.label || IMPORT_TYPE_LABEL[r.type];
+    return `<li style="display:block;opacity:${r.include ? 1 : 0.6}">
+      <div class="row" style="gap:10px"><input type="checkbox" ${r.include ? "checked" : ""} ${f("include")} aria-label="取り込む">
+        <span class="badge ${r.type === "expense" || r.type === "bill" ? "" : "accent"}">${IMPORT_TYPE_LABEL[r.type]}</span>
+        <b class="grow ellipsis">${esc(title)}</b>${r.type === "payslip" ? "" : `<span class="num">${esc(yen(r.amount))}</span>`}</div>
+      <div style="margin-top:8px">${body}</div>${warn}</li>`;
+  };
+
+  const viewImport = () => {
+    if (!state.accounts.length) return needAccounts();
+    const prompt = I.buildPrompt(state, { today: today() });
+    const rows = ui.importRows || [];
+    const n = rows.filter((r) => r.include).length;
+    return `<section class="card"><h3>1. Claude に画像と依頼文を送る</h3>
+        <p class="small muted" style="margin:0 0 10px">Claude のアプリで、レシート・残高・請求・給与明細の画像（何枚でも）を添付し、下の依頼文を貼り付けて送信します。今の Claude の契約のままで使えます（追加料金なし）。</p>
+        <button class="primary" data-action="imp-copy">依頼文をコピー</button>
+        <details style="margin-top:10px"><summary>依頼文を見る</summary><textarea readonly rows="10" id="impPrompt" style="margin-top:8px;font-size:13px">${esc(prompt)}</textarea></details></section>
+      <section class="card"><h3>2. Claude の返事を貼り付ける</h3>
+        <textarea rows="6" id="impText" placeholder="支出,2026-09-30,1280,セブンイレブン,Olive,生活費&#10;残高,2026-09-30,182345,,広島銀行,">${esc(ui.importText || "")}</textarea>
+        <div class="row" style="margin-top:10px;gap:8px"><button class="primary" data-action="imp-parse">読み込む</button>${ui.importText ? '<button class="ghost" data-action="imp-clear">クリア</button>' : ""}</div></section>
+      ${rows.length || (ui.importSkipped || []).length ? `<section class="card"><div class="row between"><h3>3. 確認して登録</h3><span class="small muted">${rows.length}件中 ${n}件を取り込む</span></div>
+        <p class="tiny" style="margin:0 0 6px">内容を確認し、違うところは直してください。チェックを外した行は取り込みません。</p>
+        ${rows.length ? `<ul class="list">${rows.map(importRowHtml).join("")}</ul>` : ""}
+        ${(ui.importSkipped || []).length ? `<details style="margin-top:8px"><summary>読み取れなかった行（${ui.importSkipped.length}）</summary><pre class="tiny" style="white-space:pre-wrap">${esc(ui.importSkipped.join("\n"))}</pre></details>` : ""}
+        ${rows.length ? `<button class="primary" data-action="imp-apply" style="margin-top:12px;width:100%" ${n ? "" : "disabled"}>${n}件を登録する</button>` : ""}</section>` : ""}`;
+  };
+
   const viewSettings = () => {
     const s = state.settings;
     const notifySupported = "Notification" in window;
@@ -700,6 +758,7 @@
     living: ["生活費の設定", viewLiving],
     categories: ["カテゴリ", viewCategories],
     settings: ["設定・データ", viewSettings],
+    import: ["画像から取り込む", viewImport],
   };
   const TABS = { home: ["ホーム", viewHome], forecast: ["残高予測", viewForecast], input: ["入力", viewInput], analysis: ["カテゴリ分析", viewAnalysis], menu: ["メニュー", viewMenu] };
 
@@ -1303,6 +1362,49 @@
       commit();
       toast(`${D.dayLabel(payday)}の給与を${yen(amount)}で予定しました`);
     },
+    "imp-copy": async () => {
+      const text = I.buildPrompt(state, { today: today() });
+      try {
+        await navigator.clipboard.writeText(text);
+        toast("依頼文をコピーしました。Claude に画像と一緒に貼り付けてください");
+      } catch (e) {
+        // クリップボードが使えない環境では、全文を選択して手動でコピーしてもらう
+        const box = $("#impPrompt");
+        box.closest("details").open = true;
+        box.focus();
+        box.select();
+        toast("選択された文をコピーしてください");
+      }
+    },
+    "imp-parse": () => {
+      ui.importText = $("#impText").value;
+      const { rows, skipped } = I.parseImport(ui.importText, state, { today: today() });
+      ui.importRows = rows;
+      ui.importSkipped = skipped;
+      render();
+      if (!rows.length) toast("取り込める行が見つかりませんでした。形式を確認してください");
+    },
+    "imp-clear": () => {
+      ui.importText = "";
+      ui.importRows = [];
+      ui.importSkipped = [];
+      render();
+    },
+    "imp-apply": () => {
+      const rows = ui.importRows || [];
+      const bad = rows.find((r) => r.include && (r.type === "balance" ? !r.accountId : r.type !== "payslip" && (!r.amount || !r.accountId)));
+      if (bad) return toast("口座か金額が空の行があります");
+      undoable(
+        (done) => `${Object.entries(done).filter(([, v]) => v).map(([k, v]) => `${IMPORT_TYPE_LABEL[k]}${v}件`).join("・")}を取り込みました`,
+        () => {
+          const done = I.applyImport(state, rows, { today: today() });
+          ui.importRows = [];
+          ui.importSkipped = [];
+          ui.importText = "";
+          return done;
+        }
+      );
+    },
     "goal-new": () => goalSheet(null),
     "goal-edit": (b) => goalSheet(state.goals.find((x) => x.id === b.dataset.id)),
     "cat-new": () => catSheet(null),
@@ -1391,6 +1493,17 @@
           toast("JSONを読み込めませんでした");
         }
       });
+      return;
+    }
+    if (t.dataset.imp !== undefined && ui.importRows) {
+      const r = ui.importRows[Number(t.dataset.i)];
+      if (!r) return;
+      const field = t.dataset.imp;
+      if (t.type === "checkbox") r[field] = t.checked;
+      else if (field === "amount") r.amount = Math.abs(money(t.value)) || 0;
+      else r[field] = t.value;
+      if (field === "accountId" && r.type === "balance" && t.value && !r.warnings.length) r.include = true;
+      render();
       return;
     }
     const bind = t.dataset.bind;
