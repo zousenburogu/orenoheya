@@ -426,17 +426,36 @@
       if (!st.includeTodayLiving && d === today) d = D.addDays(d, 1);
       const extra = st.extraHolidays || [];
       const misc = Math.round(Number(st.miscMonthly) || 0);
+      // 実績で使った分は見込みから差し引く（実績と見込みの二重計上を防ぐ）
+      const spent = (categoryId, from, to) =>
+        state.transactions
+          .filter((t) => t.status === "actual" && t.categoryId === categoryId && t.amount < 0 && !t.adjustment && t.date >= from && t.date <= to)
+          .reduce((sum, t) => sum - t.amount, 0);
+      const livingToday = spent("cat_living", today, today);
+      // 今月の雑費は「月の枠 − 今月の実績」を残りの日数で割る。来月以降は月の枠をそのまま日割り
+      const firstMiscDay = d;
+      const monthStart = `${today.slice(0, 7)}-01`;
+      const miscLeftThisMonth = Math.max(0, misc - spent("cat_misc", monthStart, today));
+      const daysLeftThisMonth = D.diffDays(firstMiscDay, D.endOfMonth(today)) + 1;
       for (; d <= end; d = D.addDays(d, 1)) {
         const off = D.isDayOff(d, extra);
-        const cost = Math.round(Number(off ? st.holidayCost : st.weekdayCost) || 0);
+        let cost = Math.round(Number(off ? st.holidayCost : st.weekdayCost) || 0);
+        if (d === today) cost = Math.max(0, cost - livingToday);
         if (cost) push({ date: d, accountId: st.livingAccountId, amount: -cost, label: off ? "生活費（休日）" : "生活費（平日）", categoryId: "cat_living", source: "living" });
         if (misc) {
           const y = Number(d.slice(0, 4));
           const m = Number(d.slice(5, 7));
           const day = Number(d.slice(8, 10));
           const dim = D.daysInMonth(y, m);
-          // 月額を日数で割り、端数は累積で調整して月合計をぴったり一致させる
-          const share = Math.round((misc * day) / dim) - Math.round((misc * (day - 1)) / dim);
+          let share;
+          if (d.slice(0, 7) === today.slice(0, 7)) {
+            // 今月の残り枠を残り日数で割る（端数は累積で調整して合計を一致させる）
+            const k = D.diffDays(firstMiscDay, d) + 1;
+            share = Math.round((miscLeftThisMonth * k) / daysLeftThisMonth) - Math.round((miscLeftThisMonth * (k - 1)) / daysLeftThisMonth);
+          } else {
+            // 月額を日数で割り、端数は累積で調整して月合計をぴったり一致させる
+            share = Math.round((misc * day) / dim) - Math.round((misc * (day - 1)) / dim);
+          }
           if (share) push({ date: d, accountId: st.livingAccountId, amount: -share, label: "雑費（日割り）", categoryId: "cat_misc", source: "misc" });
         }
       }

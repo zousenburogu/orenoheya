@@ -292,3 +292,22 @@ test("目標：誕生日と何歳まで・いつからで期日と必要額を�
   // 年齢指定がなければ日付指定を使う（従来どおり）
   assert.equal(K.goalTargetDate({ targetDate: "2031-01-01" }, s.settings), "2031-01-01");
 });
+
+test("実績と見込みの二重計上をしない：今日の生活費・今月の雑費枠", () => {
+  const s = setup();
+  Object.assign(s.settings, { livingAccountId: "life", weekdayCost: 1000, holidayCost: 3000, miscMonthly: 10000, includeTodayLiving: true });
+  // 2026-09-30(水)。今日すでに生活費 700円、今月の雑費 6,000円を使った
+  K.addTransaction(s, { accountId: "life", date: "2026-09-30", amount: -700, categoryId: "cat_living", label: "コンビニ" });
+  K.addTransaction(s, { accountId: "life", date: "2026-09-10", amount: -6000, categoryId: "cat_misc", label: "日用品" });
+  const ev = K.collectEvents(s, "2026-09-30", "2026-10-31", { today: "2026-09-30" });
+  const living930 = ev.filter((e) => e.source === "living" && e.date === "2026-09-30");
+  assert.deepEqual(living930.map((e) => e.amount), [-300]); // 1,000 − 実績700
+  const misc = (m) => ev.filter((e) => e.source === "misc" && e.date.startsWith(m)).reduce((a, e) => a + e.amount, 0);
+  assert.equal(misc("2026-09"), -4000); // 10,000 − 実績6,000 を今日1日で
+  assert.equal(misc("2026-10"), -10000); // 来月は枠どおり
+  // 実績が見込みを超えたら、見込みは0（マイナスにはしない）
+  K.addTransaction(s, { accountId: "life", date: "2026-09-30", amount: -5000, categoryId: "cat_misc", label: "服" });
+  K.addTransaction(s, { accountId: "life", date: "2026-09-30", amount: -2000, categoryId: "cat_living", label: "外食" });
+  const ev2 = K.collectEvents(s, "2026-09-30", "2026-09-30", { today: "2026-09-30" });
+  assert.equal(ev2.filter((e) => e.source === "living" || e.source === "misc").length, 0);
+});
