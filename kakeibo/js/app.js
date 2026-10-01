@@ -4,6 +4,7 @@
 
   const K = window.Kakeibo;
   const I = window.KImport;
+  const P = window.KPeriods;
   const D = window.KDates;
   const C = window.KChart;
   const yen = K.yen;
@@ -533,6 +534,7 @@
     ["goals", "目標", "必要な月間貯金額"],
     ["living", "生活費の設定", "平日・休日の単価、雑費枠"],
     ["categories", "カテゴリ", "色・比較基準"],
+    ["periods", "給料期間の収支", "期間ごとの費用・貯金見込み・予算枠・リボ"],
     ["import", "画像から取り込む", "レシート・残高・請求・給与明細"],
     ["earncal", "稼ぐ目安カレンダー", "年収目標・貯金目標に平日いくら"],
     ["settings", "設定・データ", "給料日・通知・バックアップ"],
@@ -570,6 +572,7 @@
   };
 
   const describeDays = (r) => {
+    if (r.onPayday) return `毎月 給料日${r.startDate ? `（${r.startDate.slice(0, 7).replace("-", "/")}〜${r.endDate ? r.endDate.slice(0, 7).replace("-", "/") : ""}）` : ""}`;
     const days = r.days.map((d) => (Number(d) >= 31 ? "末日" : `${d}日`)).join("・");
     const every = Number(r.intervalMonths) > 1 ? `${r.intervalMonths}か月ごと` : "毎月";
     const adj = r.adjust === "prev" ? "（休日は前営業日）" : r.adjust === "next" ? "（休日は翌営業日）" : "";
@@ -680,7 +683,7 @@
         ${'<div class="cal-cell blank"></div>'.repeat(D.dow(cal.first))}
         ${cal.days.map((d) => {
           const c = cell(d);
-          const cls = ["cal-cell", d.dayOff ? "off" : "work", d.past || d.inPeriod === false ? "past" : "", d.today ? "today" : ""].join(" ");
+          const cls = ["cal-cell", d.dayOff ? "off" : "work", d.past || d.inPeriod === false ? "past" : "", d.today ? "today" : "", c.cls || ""].join(" ");
           const inner = c.html || (d.dayOff && d.holiday ? `<span class="cal-sub ellipsis">${esc(d.holiday)}</span>` : "");
           const label = `${D.dayLabelLong(d.date)}${d.holiday ? ` ${d.holiday}` : ""}${d.dayOff ? " 休み" : ""}${c.label ? ` ${c.label}` : ""}`;
           return `<div class="${cls}" role="gridcell" aria-label="${esc(label)}"><span class="cal-day num">${Number(d.date.slice(8))}</span>${inner}</div>`;
@@ -814,6 +817,228 @@
       ${mode === "income" ? viewIncomeCal(t, month) : viewSavingsCal(t, month)}`;
   };
 
+  /* ---------- 画面: 給料期間の収支 ---------- */
+
+  const PER_TABS = [["summary", "集計"], ["calendar", "カレンダー"], ["items", "予定"], ["budget", "予算枠"], ["revo", "リボ"]];
+  const GROUP_SERIES = [["living", "生活費", "s1"], ["misc", "雑費", "s2"], ["fixed", "固定費", "s3"], ["repay", "返済", "s4"]];
+  const mmdd = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
+  const ymd2 = (d) => `${d.slice(2, 4)}/${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
+
+  const viewPeriods = () => {
+    if (!state.accounts.length) return needAccounts();
+    const tab = PER_TABS.some(([k]) => k === ui.perTab) ? ui.perTab : "summary";
+    let html = `<section class="scroll-x" role="group" aria-label="表示">${PER_TABS.map(([k, l]) => `<button class="chip" aria-pressed="${tab === k}" data-action="per-tab" data-key="${k}">${l}</button>`).join("")}</section>`;
+    html += { summary: perSummary, calendar: perCalendar, items: perItems, budget: perBudget, revo: perRevo }[tab]();
+    return html;
+  };
+
+  const perRules = () => {
+    const st = state.settings;
+    return `<p class="tiny" style="margin:6px 0 0">生活費：平日 ${esc(yen(st.weekdayCost))}・休日 ${esc(yen(st.holidayCost))}／雑費：給料期間ごとに ${esc(yen(st.miscMonthly))}／給料日：毎月${esc(st.payday)}日（休日は${st.paydayAdjust === "next" ? "翌" : st.paydayAdjust === "none" ? "そのまま" : "前の"}${st.paydayAdjust === "none" ? "" : "平日"}）
+      <button class="link small" data-sub-go="living">生活費・休みを変更</button>・<button class="link small" data-sub-go="settings">給料日を変更</button></p>`;
+  };
+
+  const perSummary = () => {
+    const count = Number(ui.perCount) || 6;
+    const rows = P.periodTable(state, { today: today(), count, includeCurrent: !!ui.perCurrent });
+    let html = `<section class="row wrap" style="gap:12px">
+      <label class="field" style="width:auto">期間の数<select data-bind="perCount" style="width:auto">${[3, 6, 12].map((n) => `<option value="${n}" ${n === count ? "selected" : ""}>${n}期間</option>`).join("")}</select></label>
+      <label class="check small" style="align-self:end"><input type="checkbox" data-bind="perCurrent" ${ui.perCurrent ? "checked" : ""}> 今の給料期間（今日を含む）から</label>
+    </section>`;
+    const last = rows[rows.length - 1];
+    html += `<section class="tiles">
+      <div class="card tile"><div class="label">${rows.length}期間の貯金見込み（累計）</div><div class="value num">${esc(yen(last ? last.cumulative : 0))}</div><div class="sub">${rows.length ? `${ymd2(rows[0].start)}〜${ymd2(last.end)}` : ""}</div></div>
+      <div class="card tile"><div class="label">1期間あたりの費用（平均）</div><div class="value num">${esc(yen(rows.length ? rows.reduce((a, r) => a + r.total, 0) / rows.length : 0))}</div></div>
+    </section>`;
+    html += `<section class="card"><h3>給料期間ごとの費用</h3>
+      <div class="legend">${GROUP_SERIES.map(([, name, cls]) => `<span><i class="sw ${cls}"></i>${name}</span>`).join("")}<span>棒の下：給料日／貯金見込みの累計</span></div>
+      <div class="chart" id="periodChart"></div>${perRules()}</section>`;
+    html += `<section class="card"><h3>集計表</h3><div class="table-wrap"><table class="data period-table"><thead><tr>
+      <th>期間</th><th class="r">平日</th><th class="r">休日</th><th class="r">収入</th><th class="r">生活費</th><th class="r">雑費</th><th class="r">固定費</th><th class="r">返済</th><th class="r">費用合計</th><th class="r">貯金見込み</th><th class="r">累計</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr><td style="white-space:nowrap">${mmdd(r.start)}〜${mmdd(r.end)}</td><td class="r num">${r.weekdays}</td><td class="r num">${r.holidays}</td><td class="r num">${short(r.income)}</td><td class="r num">${short(r.living)}</td><td class="r num">${short(r.misc)}</td><td class="r num">${short(r.fixed)}</td><td class="r num">${short(r.repay)}</td><td class="r num"><b>${short(r.total)}</b></td><td class="r num"><b>${short(r.saving)}</b></td><td class="r num">${short(r.cumulative)}</td></tr>`).join("")}
+      </tbody></table></div><p class="tiny" style="margin:6px 0 0">単位：円。期間＝給料日〜次の給料日の前日。別口座の予定は集計に含めません。</p></section>`;
+    html += rows.map((r) => `<details class="card" style="margin-bottom:8px"><summary><b>${mmdd(r.start)}〜${mmdd(r.end)}</b>　貯金見込み <b class="num">${esc(yen(r.saving))}</b></summary>
+      <ul class="list" style="margin-top:6px">${r.items.map((i) => perItemRow(i)).join("") || '<li class="small muted">予定はありません</li>'}
+      <li class="small"><span class="date"></span><div class="grow">生活費（平日${r.weekdays}日×${short(state.settings.weekdayCost)}＋休日${r.holidays}日×${short(state.settings.holidayCost)}）</div><span class="amt num">−${esc(yen(r.living))}</span></li>
+      <li class="small"><span class="date"></span><div class="grow">雑費</div><span class="amt num">−${esc(yen(r.misc))}</span></li></ul></details>`).join("");
+    return html;
+  };
+
+  const perItemRow = (i, { actions = false } = {}) => {
+    const badge = `<span class="badge">${P.GROUP_LABEL[i.group]}</span>${i.other ? ' <span class="badge">別口座・集計外</span>' : ""}`;
+    const act = !actions ? "" : i.source === "recurrence"
+      ? `<span class="actions"><button class="small ghost" data-action="occ-edit" data-id="${esc(i.refId)}" data-date="${esc(i.original)}">変更</button></span>`
+      : `<span class="actions"><button class="small ghost" data-action="tx-edit" data-id="${esc(i.refId)}">編集</button></span>`;
+    return `<li style="${i.other ? "opacity:.75" : ""}"><span class="date">${esc(D.dayLabelLong(i.date))}</span><div class="grow"><div class="ellipsis">${esc(i.label)}</div><div class="meta">${badge}</div></div><span class="amt">${signed(i.amount)}</span>${act}</li>`;
+  };
+
+  const perCalendar = () => {
+    const t = today();
+    const ym = ui.perMonth || t.slice(0, 7);
+    const { items, payday } = P.monthItems(state, ym);
+    const first = `${ym}-01`;
+    const last = D.endOfMonth(first);
+    const days = [];
+    for (let d = first; d <= last; d = D.addDays(d, 1)) {
+      days.push({ date: d, dayOff: D.isDayOff(d, state.settings.extraHolidays || []), holiday: D.holidayName(d), past: d < t, today: d === t });
+    }
+    const cal = { month: ym, first, days, prevMonth: D.addMonths(first, -1).slice(0, 7), nextMonth: D.addMonths(first, 1).slice(0, 7), hasPrev: true, hasNext: true };
+    let html = `<section class="card">${calendarGrid(cal, (d) => {
+      const its = items.filter((i) => i.date === d.date);
+      const marks = [
+        its.some((i) => !i.other && i.amount > 0) ? '<span class="mark in" title="収入">＋</span>' : "",
+        its.some((i) => !i.other && i.amount < 0) ? '<span class="mark out" title="支払い">−</span>' : "",
+        its.some((i) => i.other) ? '<span class="mark other" title="別口座">別</span>' : "",
+      ].join("");
+      const isPay = d.date === payday;
+      const label = [isPay ? "給料日・ここから新しい給料期間" : "", ...its.map((i) => `${i.label}${yen(i.amount)}${i.other ? "（別口座）" : ""}`)].filter(Boolean).join("、");
+      return { html: `${isPay ? '<span class="cal-pay">給料日</span>' : ""}${marks ? `<span class="cal-marks">${marks}</span>` : ""}`, label, cls: isPay ? "payday" : "" };
+    }, "給料期間の予定")}
+      <div class="legend" style="margin-top:10px"><span><span class="mark in">＋</span>収入</span><span><span class="mark out">−</span>支払い</span><span><span class="mark other">別</span>別口座（集計外）</span><span><span style="display:inline-block;width:3px;height:12px;background:var(--accent)"></span>給料日（給料期間の区切り）</span></div></section>`;
+    const p = P.periodAt(state.settings, first);
+    html += `<section class="card"><h3>${Number(ym.slice(5))}月の予定</h3>
+      <p class="tiny" style="margin:0 0 6px">給料期間：${ymd2(p.start)}〜${ymd2(p.end)}${payday <= last ? ` ／ ${mmdd(payday)}から次の期間` : ""}</p>
+      <ul class="list">${items.map((i) => perItemRow(i, { actions: true })).join("") || '<li class="small muted">予定はありません</li>'}</ul></section>`;
+    return html;
+  };
+
+  const perItems = () => {
+    const t = today();
+    const recs = state.recurrences.filter((r) => !r.toAccountId);
+    const groupName = (r) => (r.amount > 0 ? "収入" : P.GROUP_LABEL[(K.categoryById(state, r.categoryId) || {}).group || "fixed"]);
+    const otherName = (id) => {
+      const a = K.accountById(state, id);
+      return a ? `${a.name}${a.includeInTotal === false ? "（別口座・集計外）" : ""}` : "";
+    };
+    const oneOffs = state.transactions.filter((x) => x.status === "planned" && !x.recurrenceId).sort((a, b) => (a.date < b.date ? -1 : 1));
+    let html = `<section class="row wrap" style="gap:8px"><button class="primary" data-action="plan-new">＋ 予定を追加</button><button data-action="plan-initial">指示書の初期データを追加</button></section>`;
+    html += `<section class="card"><h3>毎月の予定</h3><ul class="list">${recs.map((r) => `<li><div class="grow"><div class="ellipsis">${esc(r.label)} <span class="badge">${esc(groupName(r))}</span></div>
+      <div class="meta">${esc(describeDays(r))}${!r.onPayday && r.startDate ? `・${esc(r.startDate.slice(0, 7).replace("-", "/"))}〜${esc(r.endDate ? r.endDate.slice(0, 7).replace("-", "/") : "")}` : ""}・${esc(otherName(r.accountId))}</div></div>
+      <span class="amt">${signed(r.amount)}</span><span class="actions"><button class="small ghost" data-action="rec-edit" data-id="${esc(r.id)}">編集</button></span></li>`).join("") || '<li class="small muted">なし</li>'}</ul>
+      <p class="tiny" style="margin:6px 0 0">給料など月ごとに金額が違うものは「カレンダー」の予定一覧の「変更」でその月だけ上書きできます。</p></section>`;
+    html += `<section class="card"><h3>単発の予定</h3><ul class="list">${oneOffs.map((x) => `<li${x.date < t ? ' style="opacity:.7"' : ""}><span class="date">${esc(ymd2(x.date))}</span><div class="grow"><div class="ellipsis">${esc(x.label)} <span class="badge">${esc(x.amount > 0 ? "収入" : P.GROUP_LABEL[(K.categoryById(state, x.categoryId) || {}).group || "fixed"])}</span></div><div class="meta">${esc(otherName(x.accountId))}</div></div>
+      <span class="amt">${signed(x.amount)}</span><span class="actions"><button class="small ghost" data-action="tx-edit" data-id="${esc(x.id)}">編集</button></span></li>`).join("") || '<li class="small muted">なし</li>'}</ul></section>`;
+    return html;
+  };
+
+  const perBudget = () => {
+    const b = state.settings.budget || {};
+    const r = P.budgetMode(state, b);
+    let html = `<section class="card"><h3>予算枠（給料日前など）</h3><form class="stack" data-form="budget" style="gap:10px">
+      <div class="grid2"><label class="field">開始日<input type="date" name="start" value="${esc(b.start || today())}"></label>
+      <label class="field">終了日<input type="date" name="end" value="${esc(b.end || D.addDays(K.nextPayday(state.settings, today()), -1))}"></label></div>
+      <label class="field">使える額（例：後払いの残り枠）<input name="amount" inputmode="numeric" value="${esc(b.amount || "")}" placeholder="例: 27797+10000"></label>
+      <label class="check"><input type="checkbox" name="includeMisc" ${b.includeMisc ? "checked" : ""}> 雑費も見込みに含める（給料期間の途中からは日割り）</label>
+      <button class="primary" type="submit">計算する</button></form></section>`;
+    if (r && r.amount) {
+      const level = r.diff >= 0 ? "good" : "critical";
+      html += `<section class="tiles">
+        <div class="card tile"><div class="label">1日あたり使える額</div><div class="value num">${esc(yen(r.perDay))}</div><div class="sub">${esc(yen(r.amount))} ÷ ${r.days}日</div></div>
+        <div class="card tile"><div class="label">見込み支出</div><div class="value num">${esc(yen(r.expected))}</div><div class="sub">生活費 ${esc(yen(r.living))}${r.includeMisc ? `＋雑費 ${esc(yen(r.misc))}` : "（雑費なし）"}</div></div>
+        <div class="card tile"><div class="label">${r.diff >= 0 ? "余る" : "足りない"}</div><div class="value num">${esc(yen(Math.abs(r.diff)))}</div></div>
+      </section>
+      <section>${alertBox(level, `<div>${mmdd(r.start)}〜${mmdd(r.end)}（平日${r.weekdays}日・休日${r.holidays}日）：生活費ルールだと ${esc(yen(r.expected))}。使える額 ${esc(yen(r.amount))} に対して <b class="num">${esc(yen(Math.abs(r.diff)))}</b> ${r.diff >= 0 ? "余ります" : "足りません"}</div>`)}</section>`;
+    }
+    return html;
+  };
+
+  const perRevo = () => {
+    const v = ui.revo || { apr: 18, startMonth: D.addMonths(today(), 1).slice(0, 7) };
+    const r = P.revolving(v);
+    let html = `<section class="card"><h3>リボ返済シミュレーター</h3><div class="stack" style="display:grid;gap:10px" id="revoForm">
+      <div class="grid2"><label class="field">残高<input inputmode="numeric" data-revo="balance" value="${esc(v.balance || "")}" placeholder="例: 50000"></label>
+      <label class="field">月々の返済額<input inputmode="numeric" data-revo="payment" value="${esc(v.payment || "")}" placeholder="例: 5000"></label></div>
+      <div class="grid2"><label class="field">年利（%）<input type="number" step="0.1" data-revo="apr" value="${esc(v.apr ?? 18)}"></label>
+      <label class="field">最初の返済月<input type="month" data-revo="startMonth" value="${esc(v.startMonth || "")}"></label></div>
+      <label class="field">一括返済する月（任意）<input type="month" data-revo="lumpMonth" value="${esc(v.lumpMonth || "")}"></label>
+      <p class="tiny" style="margin:0">利息は「残高 × 年利 × その月の日数 ÷ 365」（円未満切り捨て）で計算する目安です。実際の請求額はカード会社の明細で確認してください。</p></div></section>`;
+    if (!r) return html + `<p class="small muted">残高と月々の返済額を入れると計算します。</p>`;
+    if (r.neverEnds && !r.rows.length) return html + alertBox("critical", `<div>月々の返済額 ${esc(yen(r.payment))} が利息以下なので、残高が減りません</div>`);
+    html += `<section class="tiles">
+      <div class="card tile"><div class="label">利息の合計</div><div class="value num">${esc(yen(r.totalInterest))}</div></div>
+      <div class="card tile"><div class="label">返済回数</div><div class="value num">${r.rows.length}回</div><div class="sub">${r.rows.length ? `${r.rows[r.rows.length - 1].month.replace("-", "/")}に完済` : ""}</div></div>
+      <div class="card tile"><div class="label">支払総額</div><div class="value num">${esc(yen(r.totalPaid || 0))}</div></div></section>`;
+    if (r.neverEnds) html += alertBox("critical", "<div>このままでは完済までに50年以上かかります。返済額を増やしてください</div>");
+    html += `<section class="card"><h3>返済スケジュール</h3><div class="table-wrap"><table class="data"><thead><tr><th>月</th><th class="r">支払額</th><th class="r">利息</th><th class="r">元金</th><th class="r">残高</th></tr></thead><tbody>
+      ${r.rows.map((x) => `<tr><td>${x.month.replace("-", "/")}${x.lump ? ' <span class="badge">一括</span>' : ""}</td><td class="r num">${short(x.payment)}</td><td class="r num">${short(x.interest)}</td><td class="r num">${short(x.principal)}</td><td class="r num">${short(x.balance)}</td></tr>`).join("")}
+      </tbody></table></div></section>`;
+    return html;
+  };
+
+  // 予定の追加（指示書 2-1：名前・金額・日付の種類・開始/終了月・区分・支払い元）
+  const planSheet = () => {
+    sheetActions = {};
+    const accs = state.accounts;
+    openSheet("予定を追加", `<div style="display:grid;gap:14px">
+      <label class="field">名前<input name="label" required placeholder="例: 電気代、楽天モバイル、d払い"></label>
+      <div class="grid2"><label class="field">金額<input name="amount" inputmode="numeric" required></label>
+      <label class="field">区分<select name="group"><option value="fixed">固定費</option><option value="repay">返済</option><option value="income-salary">収入（給料）</option><option value="income-bonus">収入（ボーナス）</option><option value="income-other">収入（その他）</option></select></label></div>
+      <label class="field">日付<select name="when" id="planWhen"><option value="once">単発（年月日）</option><option value="monthly">毎月 X日</option><option value="payday">毎月 給料日と同じ日（給料のあとに払うもの）</option></select></label>
+      <div class="grid2"><label class="field" data-when="once">年月日<input type="date" name="date" value="${esc(today())}"></label>
+      <label class="field" data-when="monthly">毎月の日（末日は31）<input type="number" name="day" min="1" max="31" value="27"></label></div>
+      <div class="grid2" data-when="repeat"><label class="field">開始月<input type="month" name="startMonth" value="${esc(today().slice(0, 7))}"></label>
+      <label class="field">終了月（空欄＝終了なし）<input type="month" name="endMonth"></label></div>
+      <label class="field">支払い元<select name="accountId">${accs.map((a) => `<option value="${esc(a.id)}" ${a.id === (state.settings.salaryAccountId || accs[0].id) ? "selected" : ""}>${esc(a.name)}${a.includeInTotal === false ? "（別口座・集計外）" : ""}</option>`).join("")}</select></label>
+      <p class="tiny" style="margin:0">別口座（合計に含めない口座）を選ぶと、カレンダーには出ますが集計には入りません。別口座がなければ「メニュー › 口座」で「合計に含める」をオフにした口座を作ってください。</p>
+      ${foot(false)}</div>`, (fd) => {
+      const amt = Math.abs(money(fd.get("amount")));
+      if (!amt) return toast("金額を入れてください"), false;
+      const g = fd.get("group");
+      const income = g.startsWith("income");
+      const categoryId = { fixed: "cat_fixed", repay: "cat_repay", "income-salary": "cat_salary", "income-bonus": "cat_bonus", "income-other": K.WINDFALL }[g];
+      const amount = income ? amt : -amt;
+      const when = fd.get("when");
+      if (when === "once") {
+        const date = fd.get("date");
+        if (!date) return toast("日付を入れてください"), false;
+        K.addTransaction(state, { accountId: fd.get("accountId"), date, amount, categoryId, label: fd.get("label"), status: date > today() ? "planned" : "actual" });
+      } else {
+        const sm = fd.get("startMonth");
+        const em = fd.get("endMonth");
+        state.recurrences.push({
+          id: K.uid("rec"), label: fd.get("label"), amount, onPayday: when === "payday",
+          days: [when === "payday" ? Number(state.settings.payday) || 25 : Math.min(31, Math.max(1, Number(fd.get("day")) || 1))],
+          intervalMonths: 1, adjust: "none", accountId: fd.get("accountId"), categoryId,
+          startDate: sm ? `${sm}-01` : "", endDate: em ? D.endOfMonth(`${em}-01`) : "", doneDates: [],
+        });
+      }
+      commit();
+      toast("予定を追加しました");
+    });
+    const sync = () => {
+      const w = $("#planWhen") && $("#planWhen").value;
+      document.querySelectorAll("#sheetBody [data-when]").forEach((el) => {
+        const k = el.dataset.when;
+        el.hidden = !(k === w || (k === "repeat" && w !== "once"));
+      });
+    };
+    sheetOnInput = sync;
+    sync();
+  };
+
+  const initialSheet = () => {
+    sheetActions = {};
+    const others = state.accounts.filter((a) => a.includeInTotal === false);
+    openSheet("指示書の初期データを追加", `<div style="display:grid;gap:14px">
+      <p class="small" style="margin:0">2026年10月〜2027年1月の予定・収入と、生活費（平日700円・休日2,500円）・雑費（月15,000円）・給料日（25日・休日は前の平日）・年末年始の休み・予算枠の設定を入れます。今のデータは消えません。同じ名前と金額の定期の予定や、同じ日・同じ金額の予定はとばします。</p>
+      <label class="field">メイン口座<select name="mainId">${state.accounts.filter((a) => a.includeInTotal !== false).map((a) => `<option value="${esc(a.id)}" ${a.id === state.settings.salaryAccountId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label>
+      <label class="field">別口座（集計から除外する支払い）<select name="otherId">${others.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}<option value="">新しく「別口座」を作る</option></select></label>
+      <p class="tiny" style="margin:0;color:var(--critical)">生活費・雑費・給料日の設定は上書きされます。</p>
+      <div class="sheet-foot"><button type="submit" class="primary">追加する</button></div></div>`, (fd) => {
+      let res;
+      try {
+        undoable(() => `予定${res.recurrences + res.oneOffs}件と設定を追加しました${res.skipped.length ? `（重複${res.skipped.length}件はとばしました）` : ""}`, () => {
+          res = P.applyInitialData(state, { mainId: fd.get("mainId"), otherId: fd.get("otherId"), today: today() });
+          ui.perTab = "summary";
+          return res;
+        });
+      } catch (e) {
+        toast(e.message);
+        return false;
+      }
+    });
+  };
+
   const viewLiving = () => {
     const s = state.settings;
     const t = today();
@@ -930,6 +1155,7 @@
     settings: ["設定・データ", viewSettings],
     import: ["画像から取り込む", viewImport],
     earncal: ["稼ぐ目安カレンダー", viewEarnCal],
+    periods: ["給料期間の収支", viewPeriods],
   };
   const TABS = { home: ["ホーム", viewHome], forecast: ["残高予測", viewForecast], input: ["入力", viewInput], analysis: ["カテゴリ分析", viewAnalysis], menu: ["メニュー", viewMenu] };
 
@@ -951,6 +1177,17 @@
   };
 
   const drawCharts = () => {
+    const pc = $("#periodChart");
+    if (pc) {
+      const rows = P.periodTable(state, { today: today(), count: Number(ui.perCount) || 6, includeCurrent: !!ui.perCurrent });
+      C.stackedBars(pc, {
+        labels: rows.map((r) => `${Number(r.start.slice(5, 7))}/${Number(r.start.slice(8))}`),
+        sublabels: rows.map((r) => `〜${Number(r.end.slice(5, 7))}/${Number(r.end.slice(8))}`),
+        series: GROUP_SERIES.map(([g, name, cls]) => ({ name, cls, values: rows.map((r) => r[g]) })),
+        footer: { name: "累計", values: rows.map((r) => r.cumulative) },
+        ariaLabel: "給料期間ごとの費用の内訳",
+      });
+    }
     const home = $("#homeChart");
     if (home && state.accounts.length) {
       const t = today();
@@ -1222,7 +1459,8 @@
       <label class="field">名前<input name="label" value="${esc(r ? r.label : "")}" placeholder="例: 寮費、YouTube Premium、PayPay後払い、給料" required></label>
       <div class="grid2"><label class="field">種類<select name="kind"><option value="expense" ${kind === "expense" ? "selected" : ""}>支出</option><option value="income" ${kind === "income" ? "selected" : ""}>収入</option><option value="transfer" ${kind === "transfer" ? "selected" : ""}>口座間の振替</option></select></label>
       <label class="field">金額（1回あたり）<input name="amount" inputmode="numeric" value="${r ? Math.abs(r.amount) : ""}" required></label></div>
-      <div class="grid2"><label class="field">日（複数はカンマ区切り、末日は「末」）<input name="days" value="${esc(daysText)}" placeholder="例: 27 または 5, 20" required></label>
+      <label class="check"><input type="checkbox" name="onPayday" ${r && r.onPayday ? "checked" : ""}> 毎月の給料日と同じ日（電気代など給料のあとに払うもの。下の「日」は使いません）</label>
+      <div class="grid2"><label class="field">日（複数はカンマ区切り、末日は「末」）<input name="days" value="${esc(daysText)}" placeholder="例: 27 または 5, 20"></label>
       <label class="field">周期<select name="intervalMonths">${[1, 2, 3, 6, 12].map((m) => `<option value="${m}" ${Number(r ? r.intervalMonths || 1 : 1) === m ? "selected" : ""}>${m === 1 ? "毎月" : `${m}か月ごと`}</option>`).join("")}</select></label></div>
       <label class="field">休日の場合<select name="adjust"><option value="none" ${r && r.adjust === "none" ? "selected" : ""}>そのまま</option><option value="next" ${!r || r.adjust === "next" ? "selected" : ""}>翌営業日（引き落としに多い）</option><option value="prev" ${r && r.adjust === "prev" ? "selected" : ""}>前営業日（給料に多い）</option></select></label>
       <div class="grid2"><label class="field">口座（振替は出金元）<select name="accountId">${accountOptions(r ? r.accountId : state.settings.salaryAccountId)}</select></label>
@@ -1238,14 +1476,16 @@
         .filter(Boolean)
         .map((d) => (/^末/.test(d) ? 31 : Number(d.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)))))
         .filter((d) => d >= 1 && d <= 31);
-      if (Number.isNaN(amt) || !days.length) return toast("金額と日付を確認してください"), false;
+      const onPayday = fd.get("onPayday") === "on";
+      if (Number.isNaN(amt) || (!days.length && !onPayday)) return toast("金額と日付を確認してください"), false;
       const isTransfer = fd.get("kind") === "transfer";
       if (isTransfer && (!fd.get("toAccountId") || fd.get("toAccountId") === fd.get("accountId"))) return toast("振替の入金先を出金元と別の口座にしてください"), false;
       const data = {
         label: fd.get("label"),
         toAccountId: isTransfer ? fd.get("toAccountId") : "",
         amount: fd.get("kind") === "income" ? Math.abs(amt) : -Math.abs(amt),
-        days: [...new Set(days)].sort((a, b) => a - b),
+        days: days.length ? [...new Set(days)].sort((a, b) => a - b) : [Number(state.settings.payday) || 25],
+        onPayday,
         intervalMonths: Number(fd.get("intervalMonths")) || 1,
         adjust: fd.get("adjust"),
         accountId: fd.get("accountId"),
@@ -1319,7 +1559,7 @@
         if (fd.get("record") === "on" && state.settings.salaryAccountId) {
           // 同じ日の給与の定期ルール・予定があれば置き換える
           const salaryRec = state.recurrences.find((r) => r.categoryId === "cat_salary" && r.accountId === state.settings.salaryAccountId && r.amount > 0);
-          const occ = salaryRec && K.expandRecurrence(salaryRec, D.addDays(data.payDate, -5), D.addDays(data.payDate, 5))[0];
+          const occ = salaryRec && K.expandRecurrence(salaryRec, D.addDays(data.payDate, -5), D.addDays(data.payDate, 5), state.settings)[0];
           const planned = state.transactions.find((t) => t.status === "planned" && t.categoryId === "cat_salary" && Math.abs(D.diffDays(t.date, data.payDate)) <= 5);
           if (planned) K.updateTransaction(state, planned.id, { status: "actual", amount: data.net, date: data.payDate });
           else if (occ) K.overrideOccurrence(state, salaryRec.id, occ.original, { status: "actual", amount: data.net, date: data.payDate });
@@ -1423,11 +1663,13 @@
       <label class="field">名前<input name="name" value="${esc(c ? c.name : "")}" required></label>
       <div class="grid2"><label class="field">種類<select name="kind" ${builtin ? "disabled" : ""}><option value="expense" ${!c || c.kind === "expense" ? "selected" : ""}>支出</option><option value="income" ${c && c.kind === "income" ? "selected" : ""}>収入</option></select></label>
       <label class="field">色<input type="color" name="color" value="${esc(c ? c.color : "#2a78d6")}" style="height:42px;padding:4px"></label></div>
+      ${!c || c.kind === "expense" ? `<label class="field">給料期間の集計での区分（支出のみ）<select name="group">${[["fixed", "固定費"], ["repay", "返済"], ["living", "生活費（ルール計算に含めるので集計しない）"], ["misc", "雑費（同上）"]].map(([k, v]) => `<option value="${k}" ${(c ? c.group || "fixed" : "fixed") === k ? "selected" : ""}>${v}</option>`).join("")}</select></label>` : ""}
       <label class="field">比較基準（月額・任意）<input name="benchmark" inputmode="numeric" value="${esc(c && c.benchmark ? c.benchmark : "")}" placeholder="例: 家計調査の同年代・単身世帯の値"></label>
       ${foot(!!c && !builtin)}</div>`, (fd) => {
       const bench = String(fd.get("benchmark") || "").trim();
       const data = { name: fd.get("name"), color: fd.get("color"), benchmark: bench ? money(bench) : null };
       if (!builtin) data.kind = fd.get("kind");
+      if (fd.get("group")) data.group = fd.get("group");
       if (c) Object.assign(c, data);
       else state.categories.push(Object.assign({ id: K.uid("c") }, data));
       commit();
@@ -1549,7 +1791,7 @@
       const amount = Number(b.dataset.amount);
       const payday = rangeEnd("payday");
       const salaryRec = state.recurrences.find((r) => r.categoryId === "cat_salary" && r.accountId === state.settings.salaryAccountId && r.amount > 0);
-      const occ = salaryRec && K.expandRecurrence(salaryRec, D.addDays(payday, -5), D.addDays(payday, 5)).find((o) => !salaryRec.doneDates.includes(o.original));
+      const occ = salaryRec && K.expandRecurrence(salaryRec, D.addDays(payday, -5), D.addDays(payday, 5), state.settings).find((o) => !salaryRec.doneDates.includes(o.original));
       if (occ) K.overrideOccurrence(state, salaryRec.id, occ.original, { amount, date: payday });
       else K.addTransaction(state, { accountId: state.settings.salaryAccountId, date: payday, amount, categoryId: "cat_salary", label: "給与（見込み）", status: "planned" });
       commit();
@@ -1613,9 +1855,16 @@
       window.scrollTo(0, 0);
     },
     "cal-month": (b) => {
-      ui.calMonth = b.dataset.key;
+      if (ui.sub === "periods") ui.perMonth = b.dataset.key;
+      else ui.calMonth = b.dataset.key;
       render();
     },
+    "per-tab": (b) => {
+      ui.perTab = b.dataset.key;
+      render();
+    },
+    "plan-new": () => planSheet(),
+    "plan-initial": () => initialSheet(),
     "goal-new": () => goalSheet(null),
     "goal-edit": (b) => goalSheet(state.goals.find((x) => x.id === b.dataset.id)),
     "cat-new": () => catSheet(null),
@@ -1706,6 +1955,13 @@
       });
       return;
     }
+    if (t.dataset.revo !== undefined) {
+      ui.revo = Object.assign({ apr: 18, startMonth: D.addMonths(today(), 1).slice(0, 7) }, ui.revo || {});
+      const k = t.dataset.revo;
+      ui.revo[k] = k === "balance" || k === "payment" ? Math.abs(money(t.value)) || "" : t.value;
+      render();
+      return;
+    }
     if (t.dataset.imp !== undefined && ui.importRows) {
       const r = ui.importRows[Number(t.dataset.i)];
       if (!r) return;
@@ -1725,6 +1981,7 @@
       return;
     }
     if (bind === "includePlanned") ui.includePlanned = t.checked;
+    else if (bind === "perCurrent") ui.perCurrent = t.checked;
     else if (bind === "otHours") ui.draft.otHours = t.value;
     else ui[bind] = t.value;
     if (bind === "scope") ui.selectedDate = null;
@@ -1778,6 +2035,11 @@
       });
       commit();
       toast("保存しました");
+    } else if (kind === "budget") {
+      const amount = money(fd.get("amount"));
+      state.settings.budget = { start: fd.get("start"), end: fd.get("end"), amount: Number.isNaN(amount) ? 0 : amount, includeMisc: fd.get("includeMisc") === "on" };
+      if (state.settings.budget.end < state.settings.budget.start) return toast("終了日を開始日より後にしてください");
+      commit();
     } else if (kind === "income-target") {
       const read = (k) => {
         const v = money(fd.get(k));

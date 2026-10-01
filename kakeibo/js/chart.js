@@ -231,5 +231,115 @@
     svg.addEventListener("blur", hide);
   };
 
-  root.KChart = { lineChart, shortYen };
+  /**
+   * 積み上げ縦棒グラフ。cfg = { labels, sublabels, series: [{ name, cls, values }], footer: { name, values }, ariaLabel }
+   * 区分ごとの塗りの間に 2px の隙間、上端だけ角丸。棒にカーソル（タップ）で内訳のツールチップ
+   */
+  const stackedBars = (container, cfg) => {
+    container.innerHTML = "";
+    const n = cfg.labels.length;
+    if (!n) return;
+    const W = Math.max(280, container.clientWidth || 320);
+    const H = 240;
+    const m = { l: 44, r: 8, t: 12, b: cfg.footer ? 54 : 36 };
+    const pw = W - m.l - m.r;
+    const ph = H - m.t - m.b;
+    const totals = cfg.labels.map((_, i) => cfg.series.reduce((a, s) => a + (s.values[i] || 0), 0));
+    const ticks = niceTicks(0, Math.max(1, ...totals), 4);
+    const yMax = ticks[ticks.length - 1];
+    const y = (v) => m.t + ph - (v / yMax) * ph;
+    const slot = pw / n;
+    const bw = Math.min(56, slot * 0.6);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img", "aria-label": cfg.ariaLabel || "積み上げ棒グラフ" });
+    const axis = el("g", { class: "axis" });
+    ticks.forEach((t) => {
+      svg.appendChild(el("line", { class: t === 0 ? "zero" : "gridline", x1: m.l, x2: W - m.r, y1: y(t), y2: y(t) }));
+      axis.appendChild(el("text", { x: m.l - 6, y: y(t) + 4, "text-anchor": "end" }, shortYen(t)));
+    });
+    cfg.labels.forEach((label, i) => {
+      const cx = m.l + slot * i + slot / 2;
+      axis.appendChild(el("text", { x: cx, y: m.t + ph + 16, "text-anchor": "middle" }, label));
+      if (cfg.footer) {
+        axis.appendChild(el("text", { x: cx, y: m.t + ph + 34, "text-anchor": "middle", class: "footer-label" }, shortYen(cfg.footer.values[i])));
+      }
+    });
+    svg.appendChild(axis);
+    const tip = document.createElement("div");
+    tip.className = "tooltip";
+    tip.hidden = true;
+    const bars = [];
+    cfg.labels.forEach((label, i) => {
+      const cx = m.l + slot * i + slot / 2;
+      const g = el("g", { class: "bar-group", tabindex: "0", role: "img", "aria-label": `${label} ${cfg.series.map((s) => `${s.name}${root.Kakeibo.yen(s.values[i] || 0)}`).join("、")}` });
+      let acc = 0;
+      const visible = cfg.series.map((s, k) => ({ s, k, v: s.values[i] || 0 })).filter((x) => x.v > 0);
+      visible.forEach((x, j) => {
+        const top = y(acc + x.v);
+        const bottom = y(acc);
+        const gap = j > 0 ? 2 : 0; // 塗りの間に 2px の隙間
+        const h = Math.max(0, bottom - top - gap);
+        const isTop = j === visible.length - 1;
+        const r = isTop ? Math.min(4, h) : 0;
+        const x0 = cx - bw / 2;
+        // 上端だけ角丸の四角形
+        const d = `M${x0},${top + h}V${top + r}${r ? `Q${x0},${top} ${x0 + r},${top}` : ""}H${x0 + bw - r}${r ? `Q${x0 + bw},${top} ${x0 + bw},${top + r}` : ""}V${top + h}Z`;
+        g.appendChild(el("path", { d, class: `bar-seg ${x.s.cls}` }));
+        acc += x.v;
+      });
+      g.appendChild(el("rect", { x: m.l + slot * i, y: m.t, width: slot, height: ph, fill: "transparent" }));
+      const show = () => {
+        tip.textContent = "";
+        const head = document.createElement("div");
+        head.className = "t-date";
+        head.textContent = `${label}${cfg.sublabels ? ` ${cfg.sublabels[i]}` : ""}`;
+        tip.appendChild(head);
+        [...cfg.series].reverse().forEach((s) => {
+          const row = document.createElement("div");
+          row.className = "t-row";
+          const key = document.createElement("span");
+          key.className = `t-swatch ${s.cls}`;
+          const val = document.createElement("b");
+          val.className = "num";
+          val.textContent = root.Kakeibo.yen(s.values[i] || 0);
+          const name = document.createElement("span");
+          name.className = "t-name";
+          name.textContent = s.name;
+          row.append(key, val, name);
+          tip.appendChild(row);
+        });
+        const tot = document.createElement("div");
+        tot.className = "t-row";
+        tot.style.marginTop = "4px";
+        const tv = document.createElement("b");
+        tv.className = "num";
+        tv.textContent = root.Kakeibo.yen(totals[i]);
+        const tn = document.createElement("span");
+        tn.className = "t-name";
+        tn.textContent = "費用合計";
+        tot.append(tv, tn);
+        tip.appendChild(tot);
+        tip.hidden = false;
+        const scale = container.clientWidth / W;
+        const left = (cx + bw / 2 + 8) * scale;
+        tip.style.left = `${Math.max(0, Math.min(container.clientWidth - tip.offsetWidth, left + tip.offsetWidth > container.clientWidth ? (cx - bw / 2 - 8) * scale - tip.offsetWidth : left))}px`;
+        tip.style.top = `${m.t}px`;
+        bars.forEach((b) => b.classList.toggle("dim", b !== g));
+      };
+      const hide = () => {
+        tip.hidden = true;
+        bars.forEach((b) => b.classList.remove("dim"));
+      };
+      g.addEventListener("pointerenter", show);
+      g.addEventListener("pointerleave", hide);
+      g.addEventListener("focus", show);
+      g.addEventListener("blur", hide);
+      g.addEventListener("click", show);
+      bars.push(g);
+      svg.appendChild(g);
+    });
+    container.appendChild(svg);
+    container.appendChild(tip);
+  };
+
+  root.KChart = { lineChart, stackedBars, shortYen };
 })(window);

@@ -147,7 +147,7 @@
     const recs = state.recurrences.filter((r) => r.amount < 0 && !r.toAccountId);
     const r = bestByName(recs, label, (x) => x.label);
     if (!r) return null;
-    const occ = K.expandRecurrence(r, D.addDays(date, -20), D.addDays(date, 20));
+    const occ = K.expandRecurrence(r, D.addDays(date, -20), D.addDays(date, 20), state.settings);
     if (!occ.length) return null;
     const best = occ.reduce((a, b) => (Math.abs(D.diffDays(b.date, date)) < Math.abs(D.diffDays(a.date, date)) ? b : a));
     return { recurrenceId: r.id, original: best.original, label: r.label, accountId: r.accountId };
@@ -256,7 +256,7 @@
     if (state.transactions.some((t) => t.status === "actual" && near(t))) return slip;
     const planned = state.transactions.find((t) => t.status === "planned" && near(t));
     const salaryRec = state.recurrences.find((r) => r.categoryId === "cat_salary" && r.accountId === acc && r.amount > 0 && !r.toAccountId);
-    const occ = salaryRec && K.expandRecurrence(salaryRec, D.addDays(slip.payDate, -5), D.addDays(slip.payDate, 5)).find((o) => !salaryRec.doneDates.includes(o.original));
+    const occ = salaryRec && K.expandRecurrence(salaryRec, D.addDays(slip.payDate, -5), D.addDays(slip.payDate, 5), state.settings).find((o) => !salaryRec.doneDates.includes(o.original));
     if (planned) K.updateTransaction(state, planned.id, { status: "actual", amount: slip.net, date: slip.payDate });
     else if (occ) K.overrideOccurrence(state, salaryRec.id, occ.original, { status: "actual", amount: slip.net, date: slip.payDate });
     else K.addTransaction(state, { accountId: acc, date: slip.payDate, amount: slip.net, categoryId: "cat_salary", label: "給与", status: "actual" });

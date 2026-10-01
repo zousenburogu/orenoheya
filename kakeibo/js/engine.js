@@ -8,15 +8,18 @@
 
   const WINDFALL = "cat_windfall";
 
+  // group は給料期間の集計での区分（fixed: 固定費 / repay: 返済 / living: 生活費 / misc: 雑費）
   const defaultCategories = () => [
-    { id: "cat_housing", name: "住居費", color: "#2a78d6", kind: "expense" },
-    { id: "cat_telecom", name: "通信費", color: "#eb6834", kind: "expense" },
-    { id: "cat_subsc", name: "サブスク", color: "#1baf7a", kind: "expense" },
-    { id: "cat_bnpl", name: "後払い決済", color: "#eda100", kind: "expense" },
-    { id: "cat_living", name: "生活費", color: "#e87ba4", kind: "expense" },
-    { id: "cat_misc", name: "雑費", color: "#008300", kind: "expense" },
-    { id: "cat_extra", name: "臨時支出", color: "#4a3aa7", kind: "expense" },
-    { id: "cat_other", name: "その他", color: "#e34948", kind: "expense" },
+    { id: "cat_fixed", name: "固定費", color: "#2a78d6", kind: "expense", group: "fixed" },
+    { id: "cat_repay", name: "返済", color: "#eb6834", kind: "expense", group: "repay" },
+    { id: "cat_housing", name: "住居費", color: "#2a78d6", kind: "expense", group: "fixed" },
+    { id: "cat_telecom", name: "通信費", color: "#eb6834", kind: "expense", group: "fixed" },
+    { id: "cat_subsc", name: "サブスク", color: "#1baf7a", kind: "expense", group: "fixed" },
+    { id: "cat_bnpl", name: "後払い決済", color: "#eda100", kind: "expense", group: "repay" },
+    { id: "cat_living", name: "生活費", color: "#e87ba4", kind: "expense", group: "living" },
+    { id: "cat_misc", name: "雑費", color: "#008300", kind: "expense", group: "misc" },
+    { id: "cat_extra", name: "臨時支出", color: "#4a3aa7", kind: "expense", group: "fixed" },
+    { id: "cat_other", name: "その他", color: "#e34948", kind: "expense", group: "fixed" },
     { id: "cat_salary", name: "給与", color: "#2a78d6", kind: "income" },
     { id: "cat_bonus", name: "ボーナス", color: "#1baf7a", kind: "income" },
     { id: WINDFALL, name: "臨時収入", color: "#eda100", kind: "income" },
@@ -48,6 +51,7 @@
       baseMonthlyPay: 180000,
       annualBonus: 0,
       noSpendDates: [],
+      budget: { start: "", end: "", amount: 0, includeMisc: false },
     },
   });
 
@@ -60,6 +64,15 @@
       if (!Array.isArray(s[k])) s[k] = [];
     });
     if (!Array.isArray(s.categories) || s.categories.length === 0) s.categories = defaultCategories();
+    // 後から増えた標準カテゴリ（固定費・返済など）と区分を補う
+    const defaults = defaultCategories();
+    defaults.forEach((d, i) => {
+      if (!s.categories.some((c) => c.id === d.id)) s.categories.splice(Math.min(i, s.categories.length), 0, d);
+    });
+    s.categories.forEach((c) => {
+      if (c.kind === "expense" && !c.group) c.group = (defaults.find((d) => d.id === c.id) || {}).group || "fixed";
+    });
+    if (!s.settings.budget) s.settings.budget = { start: "", end: "", amount: 0, includeMisc: false };
     s.recurrences.forEach((r) => {
       if (!Array.isArray(r.doneDates)) r.doneDates = [];
       if (!Array.isArray(r.days)) r.days = [Number(r.days) || 1];
@@ -340,7 +353,16 @@
   /* ---------- 定期ルールの展開 ---------- */
 
   // [start, end] 内の発生日（営業日調整後）を返す。original は調整前の日付（済み管理用キー）
-  const expandRecurrence = (r, start, end) => {
+  // その月の給料日（休日なら設定に従って前後の営業日）
+  const paydayOfMonth = (settings = {}, ym) => {
+    const y = Number(ym.slice(0, 4));
+    const m = Number(ym.slice(5, 7));
+    const day = Number(settings.payday) || 25;
+    return D.adjustBusinessDay(D.ymd(y, m, Math.min(day, D.daysInMonth(y, m))), settings.paydayAdjust || "prev");
+  };
+
+  // settings は「毎月の給料日」ルール（onPayday）の日付計算に使う
+  const expandRecurrence = (r, start, end, settings) => {
     const out = [];
     const interval = Math.max(1, Number(r.intervalMonths) || 1);
     const anchor = r.startDate || "2000-01-01";
@@ -353,7 +375,12 @@
       const y = Number(cursor.slice(0, 4));
       const m = Number(cursor.slice(5, 7));
       const monthsFromAnchor = (y - aY) * 12 + (m - aM);
-      if (monthsFromAnchor % interval === 0) {
+      if (monthsFromAnchor % interval === 0 && r.onPayday) {
+        // 毎月の給料日と同じ日（電気代など給料のあとに払うもの）
+        const date = paydayOfMonth(settings || { payday: 25, paydayAdjust: "prev" }, cursor.slice(0, 7));
+        const inRange = (!r.startDate || date >= r.startDate.slice(0, 7)) && (!r.endDate || date.slice(0, 7) <= r.endDate.slice(0, 7));
+        if (inRange && date >= start && date <= end) out.push({ date, original: date });
+      } else if (monthsFromAnchor % interval === 0) {
         const dim = D.daysInMonth(y, m);
         [...new Set(r.days.map((d) => Math.min(Number(d), dim)))].forEach((day) => {
           const original = D.ymd(y, m, day);
@@ -408,7 +435,7 @@
     // 定期ルール（今日以降の未完了分）。取引に紐付いた回（済み・金額上書き）は取引側で計上する
     const linked = new Set([...state.transactions, ...state.transfers].filter((t) => t.recurrenceId).map((t) => `${t.recurrenceId}|${t.occurrenceDate}`));
     state.recurrences.forEach((r) => {
-      expandRecurrence(r, start < today ? today : start, end).forEach(({ date, original }) => {
+      expandRecurrence(r, start < today ? today : start, end, state.settings).forEach(({ date, original }) => {
         if (r.doneDates.includes(original) || linked.has(`${r.id}|${original}`)) return;
         if (r.toAccountId) {
           // 定期の振替（給料口座 → 生活費口座など）は両方の口座に反映
@@ -903,7 +930,7 @@
     canUnconfirm, unconfirmTransaction,
     overrideOccurrence, skipOccurrence,
     addTransfer, removeTransfer, setTransferStatus, completeTransfer, inFlightTotal,
-    expandRecurrence, nextPayday, collectEvents, forecast, hasInFlightInScope, resolveScope,
+    expandRecurrence, nextPayday, paydayOfMonth, collectEvents, forecast, hasInFlightInScope, resolveScope,
     sortedPayslips, overtimeRate, estimateNextPay,
     ageOn, birthdayAtAge, goalTargetDate, goalPlan, earningsCalendar, incomeCalendar, incomeYearToDate, isWorkday, categorySummary, windfallOfYear, alerts,
   };

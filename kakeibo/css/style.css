@@ -12,6 +12,8 @@
   --accent-ink: #ffffff;
   --s1: #2a78d6;
   --s2: #eb6834;
+  --s3: #1baf7a;
+  --s4: #eda100;
   --good: #0ca30c;
   --good-ink: #006300;
   --warning: #fab219;
@@ -38,6 +40,8 @@
     --accent: #3987e5;
     --s1: #3987e5;
     --s2: #d95926;
+  --s3: #199e70;
+  --s4: #c98500;
     --good-ink: #4cc24c;
     --critical-bg: #3a1c1c;
     --warning-bg: #3a2f14;
@@ -58,6 +62,8 @@
   --accent: #3987e5;
   --s1: #3987e5;
   --s2: #d95926;
+  --s3: #199e70;
+  --s4: #c98500;
   --good-ink: #4cc24c;
   --critical-bg: #3a1c1c;
   --warning-bg: #3a2f14;
@@ -492,6 +498,30 @@ label.field { position: relative; }
   .cal-amt { font-size: 14px; }
   .cal-sub { font-size: 11px; }
 }
+/* 積み上げ棒グラフ */
+.chart .bar-seg.s1 { fill: var(--s1); }
+.chart .bar-seg.s2 { fill: var(--s2); }
+.chart .bar-seg.s3 { fill: var(--s3); }
+.chart .bar-seg.s4 { fill: var(--s4); }
+.chart .bar-group { cursor: pointer; transition: opacity 0.15s; }
+.chart .bar-group.dim { opacity: 0.45; }
+.chart .bar-group:focus { outline: none; }
+.chart .footer-label { fill: var(--text) !important; font-weight: 600; }
+.tooltip .t-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.t-swatch.s1, .legend .sw.s1 { background: var(--s1); }
+.t-swatch.s2, .legend .sw.s2 { background: var(--s2); }
+.t-swatch.s3, .legend .sw.s3 { background: var(--s3); }
+.t-swatch.s4, .legend .sw.s4 { background: var(--s4); }
+.legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+/* 給料期間のカレンダー */
+.cal-cell.payday { box-shadow: inset 3px 0 0 var(--accent); }
+.cal-marks { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
+.mark { font-size: 10px; line-height: 14px; min-width: 14px; height: 14px; border-radius: 7px; text-align: center; font-weight: 700; color: #fff; padding: 0 2px; }
+.mark.in { background: var(--s1); }
+.mark.out { background: var(--s2); }
+.mark.other { background: var(--surface); color: var(--text-2); border: 1px dashed var(--text-2); border-radius: 3px; line-height: 12px; font-weight: 600; }
+.cal-pay { font-size: 9px; color: var(--accent); font-weight: 700; }
 .empty { text-align: center; color: var(--text-2); padding: 24px 8px; }
 .empty p { margin: 0 0 12px; }
 details summary { cursor: pointer; color: var(--text-2); font-size: 14px; }
