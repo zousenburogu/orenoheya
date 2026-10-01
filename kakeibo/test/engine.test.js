@@ -435,3 +435,32 @@ test("年収目標の稼ぐ目安（今年）：もらった給料・残りの�
   s.payslips.find((p) => p.payDate === "2026-09-25").gross = 370000;
   assert.ok(K.incomeCalendar(s, { today: "2026-09-30", month: "2026-10" }).perDayGross < cal.perDayGross);
 });
+test("生活費を複数口座から払う：残高がなくなったら次の口座、全部なくなったら警告", () => {
+  const s = setup(); // bank 100,000 / life 20,000 / paypay 5,000(合計外) / fx 50,000
+  K.setLivingAccounts(s, ["paypay", "life"]);
+  Object.assign(s.settings, { weekdayCost: 3000, holidayCost: 3000, miscMonthly: 0 });
+  assert.equal(s.settings.livingAccountId, "paypay");
+  const f = K.forecast(s, { today: "2026-10-01", end: "2026-10-08" }); // 8日分 24,000円は 25,000円で足りる
+  // 1日目 3,000 は PayPay、2日目は PayPay 残り 2,000 ＋ 生活費口座 1,000
+  assert.equal(f.days[0].byAccount.paypay, 2000);
+  assert.equal(f.days[1].byAccount.paypay, 0);
+  assert.equal(f.days[1].byAccount.life, 19000);
+  const day2 = f.days[1].events.filter((e) => e.source === "living");
+  assert.deepEqual(day2.map((e) => [e.accountId, e.amount]), [["life", -1000]]); // 合計対象は生活費口座の分だけ
+  assert.equal(f.livingShortage, null);
+  // 25,000 円では足りない → 9日目（25,000 ÷ 3,000 で 8日分＋α）で不足
+  const g = K.forecast(s, { today: "2026-10-01", end: "2026-10-20" });
+  assert.equal(g.livingShortage.date, "2026-10-09");
+  assert.ok(K.alerts(s, { today: "2026-10-01" }).some((a) => a.kind === "living-shortage"));
+  // 以前の1口座の設定は自動で移る
+  const old = K.normalizeState({ settings: { livingAccountId: "x" } });
+  assert.deepEqual(old.settings.livingAccountIds, ["x"]);
+});
+
+test("残高のない口座はエラー", () => {
+  const s = setup();
+  K.accountById(s, "paypay").balance = 0;
+  assert.match(K.balanceError(s, "paypay", 100), /残高がありません/);
+  assert.match(K.balanceError(s, "life", 30000), /残高（¥20,000）が足りません/);
+  assert.equal(K.balanceError(s, "life", 20000), null);
+});

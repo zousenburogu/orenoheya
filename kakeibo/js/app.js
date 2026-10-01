@@ -420,7 +420,7 @@
     if (kind === "transfer") {
       html += `<section class="card"><form class="stack" data-form="transfer">
         <label class="field">金額<input class="amount num" name="amount" inputmode="numeric" placeholder="0" required></label>
-        <div class="grid2"><label class="field">出金元<select name="fromId">${accountOptions(d.fromId || state.settings.salaryAccountId)}</select></label>
+        <div class="grid2"><label class="field">出金元<select name="fromId" data-check-balance="1">${accountOptions(d.fromId || state.settings.salaryAccountId)}</select><span class="field-error" data-balance-error hidden></span></label>
         <label class="field">入金先<select name="toId">${accountOptions(d.toId || state.settings.livingAccountId || (state.accounts[1] || {}).id)}</select></label></div>
         <div class="grid2"><label class="field">日付（着金予定日）<input type="date" name="date" value="${esc(t)}" required></label>
         <label class="field">状態<select name="status">${Object.entries(K.TRANSFER_STATUS).map(([k, v]) => `<option value="${k}" ${k === "done" ? "selected" : ""}>${v}</option>`).join("")}</select></label></div>
@@ -440,7 +440,7 @@
           .map((c) => `<label class="chip btn" style="${c.id === defaultCat ? "border-color:var(--accent)" : ""}"><input type="radio" name="categoryId" value="${esc(c.id)}" ${c.id === defaultCat ? "checked" : ""} style="width:auto;accent-color:var(--accent)"> ${esc(c.name)}</label>`)
           .join("")}</div></div>
         <div class="grid2"><label class="field">日付<input type="date" name="date" value="${esc(d.date || t)}" required></label>
-        <label class="field">口座<select name="accountId">${accountOptions(d.accountId || (kind === "income" ? state.settings.salaryAccountId : state.settings.livingAccountId) || state.accounts[0].id)}</select></label></div>
+        <label class="field">口座<select name="accountId" data-check-balance="${kind === "expense" ? "1" : ""}">${accountOptions(d.accountId || (kind === "income" ? state.settings.salaryAccountId : state.settings.livingAccountId) || state.accounts[0].id)}</select><span class="field-error" data-balance-error hidden></span></label></div>
         <label class="field">内容<input name="label" value="${esc(d.label || "")}" placeholder="${kind === "expense" ? "例: 退去費、旅行代" : "例: FX利益、仕送りの返済"}"></label>
         <label class="check"><input type="checkbox" name="planned"> 予定として登録（未来の日付は自動で予定になります）</label>
         <details><summary>詳細設定</summary><label class="check" style="margin-top:8px"><input type="checkbox" name="reflected"> 口座残高はもう更新済み（残高を変えずに記録だけする）</label></details>
@@ -548,7 +548,7 @@
     if (!state.accounts.length) return html + needAccounts();
     html += `<section class="card"><ul class="list">${state.accounts
       .map((a) => `<li><div class="grow"><div class="ellipsis"><b>${esc(a.name)}</b> ${a.includeInTotal === false ? '<span class="badge">合計に含めない</span>' : ""}</div>
-        <div class="meta">${a.id === state.settings.salaryAccountId ? "給与の入金先・" : ""}${a.id === state.settings.livingAccountId ? "生活費の支払元・" : ""}${esc(a.note || "")}</div></div>
+        <div class="meta">${a.id === state.settings.salaryAccountId ? "給与の入金先・" : ""}${K.livingAccounts(state).includes(a.id) ? `生活費の支払元${K.livingAccounts(state).length > 1 ? "①②③④⑤⑥⑦⑧⑨"[K.livingAccounts(state).indexOf(a.id)] || "" : ""}・` : ""}${esc(a.note || "")}</div></div>
         <span class="amt num">${esc(yen(a.balance))}</span><span class="actions"><button class="small" data-action="account-balance" data-id="${esc(a.id)}">残高更新</button><button class="small ghost" data-action="account-edit" data-id="${esc(a.id)}">編集</button></span></li>`)
       .join("")}</ul>
       <div class="row between" style="margin-top:8px"><span class="muted small">合計（対象口座）</span><b class="num">${esc(yen(K.sumBalances(state, K.totalAccountIds(state))))}</b></div></section>`;
@@ -1048,8 +1048,23 @@
     let off = 0;
     for (let d = t; d <= end; d = D.addDays(d, 1)) D.isDayOff(d, s.extraHolidays) ? off++ : wd++;
     const est = wd * (Number(s.weekdayCost) || 0) + off * (Number(s.holidayCost) || 0);
-    return `<section class="card"><form class="stack" data-form="living">
-      <label class="field">生活費を払う口座<select name="livingAccountId">${accountOptions(s.livingAccountId, { includeEmpty: true })}</select></label>
+    const sel = K.livingAccounts(state);
+    const ordered = [...sel.map((id) => K.accountById(state, id)), ...state.accounts.filter((a) => !sel.includes(a.id))];
+    const allEmpty = sel.length && sel.every((id) => (K.accountById(state, id).balance || 0) <= 0);
+    return `<section class="card"><h3>生活費を払う口座</h3>
+      <p class="tiny" style="margin:0 0 6px">複数選べます。上から順に使い、残高がなくなったら次の口座から払う見込みで予測します。</p>
+      ${allEmpty ? alertBox("critical", "<div>選んだ口座はどれも残高がありません。生活費を払えない見込みです</div>") : ""}
+      <ul class="list">${ordered.map((a) => {
+        const k = sel.indexOf(a.id);
+        const err = k >= 0 ? K.balanceError(state, a.id, 0) : null;
+        return `<li style="display:block"><div class="row" style="gap:10px">
+          <input type="checkbox" data-living-toggle="${esc(a.id)}" ${k >= 0 ? "checked" : ""} aria-label="${esc(a.name)}を生活費の支払いに使う">
+          ${k >= 0 ? `<span class="badge accent">${"①②③④⑤⑥⑦⑧⑨"[k] || k + 1}</span>` : ""}
+          <div class="grow"><div style="word-break:break-all">${esc(a.name)}</div><div class="meta num">残高 ${esc(yen(a.balance))}${a.includeInTotal === false ? "・合計外" : ""}</div></div>
+          ${k >= 0 && sel.length > 1 ? `<span class="actions"><button class="small ghost" data-action="living-up" data-id="${esc(a.id)}" ${k === 0 ? "disabled" : ""} aria-label="上へ">↑</button><button class="small ghost" data-action="living-down" data-id="${esc(a.id)}" ${k === sel.length - 1 ? "disabled" : ""} aria-label="下へ">↓</button></span>` : ""}</div>
+          ${err ? `<div class="field-error">${esc(err)}${sel.length > 1 && k < sel.length - 1 ? "。次の口座から払う見込みにします" : ""} <button class="link small" data-action="account-balance" data-id="${esc(a.id)}">残高を更新</button></div>` : ""}</li>`;
+      }).join("")}</ul></section>
+      <section class="card"><form class="stack" data-form="living">
       <div class="grid2"><label class="field">平日 1日あたり<input name="weekdayCost" inputmode="numeric" value="${esc(s.weekdayCost)}"></label>
       <label class="field">休日 1日あたり<input name="holidayCost" inputmode="numeric" value="${esc(s.holidayCost)}"></label></div>
       <label class="field">月の雑費枠（日用品・衣類など。日割りで計上）<input name="miscMonthly" inputmode="numeric" value="${esc(s.miscMonthly)}"></label>
@@ -1160,6 +1175,41 @@
   };
   const TABS = { home: ["ホーム", viewHome], forecast: ["残高予測", viewForecast], input: ["入力", viewInput], analysis: ["カテゴリ分析", viewAnalysis], menu: ["メニュー", viewMenu] };
 
+  const moveLiving = (id, dir) => {
+    const list = K.livingAccounts(state);
+    const i = list.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    K.setLivingAccounts(state, list);
+    commit();
+  };
+
+  /* ---------- 残高のエラー表示 ---------- */
+
+  const showBalanceError = (form, name, msg) => {
+    const sel = form.querySelector(`[name="${name}"]`);
+    const box = sel && sel.parentElement.querySelector("[data-balance-error]");
+    if (box) {
+      box.textContent = msg;
+      box.hidden = false;
+      sel.setAttribute("aria-invalid", "true");
+      sel.focus();
+    }
+    toast(msg);
+  };
+
+  // 口座を選んだ時点で、残高がなければエラーを出す
+  const checkSelectedBalance = (sel) => {
+    const box = sel.parentElement.querySelector("[data-balance-error]");
+    if (!box) return;
+    const err = sel.dataset.checkBalance ? K.balanceError(state, sel.value, 0) : null;
+    box.textContent = err ? `${err}。この口座からは払えません` : "";
+    box.hidden = !err;
+    if (err) sel.setAttribute("aria-invalid", "true");
+    else sel.removeAttribute("aria-invalid");
+  };
+
   /* ---------- 未記入の通知バー ---------- */
 
   const setupBar = () => {
@@ -1200,6 +1250,7 @@
       else b.removeAttribute("aria-current");
     });
     app.innerHTML = setupBar() + view();
+    app.querySelectorAll("select[data-check-balance]").forEach(checkSelectedBalance);
     enhanceCalc(app);
     drawCharts();
     saveUi();
@@ -1424,7 +1475,7 @@
         const acc = { id: K.uid("acc"), name, balance, balanceSet: true, includeInTotal: fd.get("includeInTotal") === "on", note: fd.get("note") };
         state.accounts.push(acc);
         if (!state.settings.salaryAccountId) state.settings.salaryAccountId = acc.id;
-        else if (!state.settings.livingAccountId && acc.includeInTotal) state.settings.livingAccountId = acc.id;
+        else if (!K.livingAccounts(state).length && acc.includeInTotal) K.setLivingAccounts(state, [acc.id]);
       }
       commit();
     });
@@ -1952,6 +2003,8 @@
         toast("元に戻しました");
       });
     },
+    "living-up": (b) => moveLiving(b.dataset.id, -1),
+    "living-down": (b) => moveLiving(b.dataset.id, 1),
     "goal-new": () => goalSheet(null),
     "goal-edit": (b) => goalSheet(state.goals.find((x) => x.id === b.dataset.id)),
     "cat-new": () => catSheet(null),
@@ -2042,6 +2095,19 @@
       });
       return;
     }
+    if (t.dataset.livingToggle) {
+      const cur = K.livingAccounts(state);
+      const id = t.dataset.livingToggle;
+      K.setLivingAccounts(state, t.checked ? [...cur, id] : cur.filter((x) => x !== id));
+      commit();
+      const err = t.checked ? K.balanceError(state, id, 0) : null;
+      toast(err ? `${err}。選んでも、残高が入るまでは次の口座から払う見込みにします` : "保存しました");
+      return;
+    }
+    if (t.dataset.checkBalance !== undefined && t.tagName === "SELECT") {
+      checkSelectedBalance(t);
+      return;
+    }
     if (t.dataset.revo !== undefined) {
       ui.revo = Object.assign({ apr: 18, startMonth: D.addMonths(today(), 1).slice(0, 7) }, ui.revo || {});
       const k = t.dataset.revo;
@@ -2087,6 +2153,11 @@
       if (Number.isNaN(amt) || amt <= 0) return toast("金額を入力してください");
       const date = fd.get("date");
       const planned = fd.get("planned") === "on" || date > t;
+      // 今日までの支出（残高から引くもの）は、口座の残高が足りなければ登録しない
+      if (ui.inputKind === "expense" && !planned && fd.get("reflected") !== "on") {
+        const err = K.balanceError(state, fd.get("accountId"), amt);
+        if (err) return showBalanceError(form, "accountId", `${err}。別の口座を選ぶか、残高を更新してください`);
+      }
       K.addTransaction(state, {
         accountId: fd.get("accountId"),
         date,
@@ -2103,6 +2174,10 @@
       const amt = money(fd.get("amount"));
       if (Number.isNaN(amt) || amt <= 0) return toast("金額を入力してください");
       if (fd.get("fromId") === fd.get("toId")) return toast("出金元と入金先が同じです");
+      if (fd.get("status") !== "scheduled") {
+        const err = K.balanceError(state, fd.get("fromId"), amt);
+        if (err) return showBalanceError(form, "fromId", `${err}。出金元を変えるか、残高を更新してください`);
+      }
       K.addTransfer(state, { fromId: fd.get("fromId"), toId: fd.get("toId"), amount: amt, date: fd.get("date"), status: fd.get("status"), label: fd.get("label") });
       commit();
       toast("振替を登録しました");
@@ -2113,7 +2188,6 @@
       render();
     } else if (kind === "living") {
       Object.assign(state.settings, {
-        livingAccountId: fd.get("livingAccountId"),
         weekdayCost: money(fd.get("weekdayCost")) || 0,
         holidayCost: money(fd.get("holidayCost")) || 0,
         miscMonthly: money(fd.get("miscMonthly")) || 0,

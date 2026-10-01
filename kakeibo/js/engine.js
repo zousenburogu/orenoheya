@@ -36,6 +36,7 @@
     payslips: [],
     settings: {
       livingAccountId: "",
+      livingAccountIds: [],
       weekdayCost: 0,
       holidayCost: 0,
       miscMonthly: 0,
@@ -73,6 +74,10 @@
     s.categories.forEach((c) => {
       if (c.kind === "expense" && !c.group) c.group = (defaults.find((d) => d.id === c.id) || {}).group || "fixed";
     });
+    // 生活費を払う口座：以前の1口座の設定を、優先順の複数口座の設定に移す
+    if (!Array.isArray(s.settings.livingAccountIds) || !s.settings.livingAccountIds.length) {
+      s.settings.livingAccountIds = s.settings.livingAccountId ? [s.settings.livingAccountId] : [];
+    }
     if (!s.settings.budget) s.settings.budget = { start: "", end: "", amount: 0, includeMisc: false };
     s.recurrences.forEach((r) => {
       if (!Array.isArray(r.doneDates)) r.doneDates = [];
@@ -153,6 +158,28 @@
   };
 
   const accountById = (state, id) => state.accounts.find((a) => a.id === id);
+
+  // 生活費を払う口座（優先順。存在する口座だけ）
+  const livingAccounts = (state) => {
+    const st = state.settings;
+    const ids = Array.isArray(st.livingAccountIds) && st.livingAccountIds.length ? st.livingAccountIds : st.livingAccountId ? [st.livingAccountId] : [];
+    return [...new Set(ids)].filter((id) => accountById(state, id));
+  };
+
+  // その口座から amount 円払えるか。払えなければエラー文（残高 0 以下なら「残高がありません」）
+  const balanceError = (state, accountId, amount = 0) => {
+    const a = accountById(state, accountId);
+    if (!a) return null;
+    const bal = Math.round(a.balance || 0);
+    if (bal <= 0) return `「${a.name}」は残高がありません（${yen(bal)}）`;
+    if (amount > bal) return `「${a.name}」の残高（${yen(bal)}）が足りません`;
+    return null;
+  };
+
+  const setLivingAccounts = (state, ids) => {
+    state.settings.livingAccountIds = [...new Set(ids)].filter((id) => accountById(state, id));
+    state.settings.livingAccountId = state.settings.livingAccountIds[0] || "";
+  };
   const categoryById = (state, id) => state.categories.find((c) => c.id === id);
 
   const totalAccountIds = (state) => state.accounts.filter((a) => a.includeInTotal !== false).map((a) => a.id);
@@ -468,7 +495,8 @@
 
     // 日割りの生活費・雑費
     const st = state.settings;
-    if (st.livingAccountId && accountById(state, st.livingAccountId)) {
+    const payFrom = livingAccounts(state);
+    if (payFrom.length) {
       let d = start < today ? today : start;
       if (!st.includeTodayLiving && d === today) d = D.addDays(d, 1);
       const extra = st.extraHolidays || [];
@@ -488,7 +516,7 @@
         const off = D.isDayOff(d, extra);
         let cost = Math.round(Number(off ? st.holidayCost : st.weekdayCost) || 0);
         if (d === today) cost = Math.max(0, cost - livingToday);
-        if (cost) push({ date: d, accountId: st.livingAccountId, amount: -cost, label: off ? "生活費（休日）" : "生活費（平日）", categoryId: "cat_living", source: "living" });
+        if (cost) push({ date: d, accountId: payFrom[0], payFrom, amount: -cost, label: off ? "生活費（休日）" : "生活費（平日）", categoryId: "cat_living", source: "living" });
         if (misc) {
           const y = Number(d.slice(0, 4));
           const m = Number(d.slice(5, 7));
@@ -503,7 +531,7 @@
             // 月額を日数で割り、端数は累積で調整して月合計をぴったり一致させる
             share = Math.round((misc * day) / dim) - Math.round((misc * (day - 1)) / dim);
           }
-          if (share) push({ date: d, accountId: st.livingAccountId, amount: -share, label: "雑費（日割り）", categoryId: "cat_misc", source: "misc" });
+          if (share) push({ date: d, accountId: payFrom[0], payFrom, amount: -share, label: "雑費（日割り）", categoryId: "cat_misc", source: "misc" });
         }
       }
     }
@@ -541,10 +569,26 @@
 
     const days = [];
     let i = 0;
+    let livingShortage = null;
     for (let d = start; d <= end; d = D.addDays(d, 1)) {
       const dayEvents = [];
       while (i < events.length && events[i].date === d) {
         const e = events[i++];
+        if (e.payFrom && e.amount < 0) {
+          // 生活費・雑費は優先順に、残高のある口座から払う。足りなければ次の口座へ（全部足りなければ最後の口座がマイナス）
+          let need = -e.amount;
+          const available = e.payFrom.reduce((sum, id) => sum + Math.max(0, balances[id] || 0), 0);
+          if (available < need && !livingShortage) livingShortage = { date: d, accountIds: e.payFrom.slice() };
+          e.payFrom.forEach((id, k) => {
+            if (need <= 0 || balances[id] === undefined) return;
+            const take = k === e.payFrom.length - 1 ? need : Math.min(need, Math.max(0, balances[id]));
+            if (take <= 0) return;
+            balances[id] -= take;
+            need -= take;
+            if (ids.includes(id)) dayEvents.push(Object.assign({}, e, { accountId: id, amount: -take }));
+          });
+          continue;
+        }
         if (balances[e.accountId] === undefined) continue;
         balances[e.accountId] += e.amount;
         if (ids.includes(e.accountId)) dayEvents.push(e);
@@ -575,6 +619,7 @@
       min: { date: min.date, balance: min.balance },
       firstBelow: firstBelow && { date: firstBelow.date, balance: firstBelow.balance },
       firstNegative: firstNegative && { date: firstNegative.date, balance: firstNegative.balance },
+      livingShortage,
     };
   };
 
@@ -880,6 +925,13 @@
         out.push({ level: "warning", kind: "threshold", message: `${D.dayLabelLong(f.min.date)}に残高が${yen(f.min.balance)}まで下がります（目安 ${yen(threshold)}）`, date: f.min.date });
       }
     }
+    if (state.accounts.length) {
+      const f2 = forecast(state, { today, start: today, end: D.addDays(today, horizon), scenario: "pessimistic" });
+      if (f2.livingShortage) {
+        const names = f2.livingShortage.accountIds.map((id) => (accountById(state, id) || {}).name).join("・");
+        out.push({ level: "critical", kind: "living-shortage", message: `${D.dayLabelLong(f2.livingShortage.date)}に生活費を払う口座（${names}）の残高がなくなります`, date: f2.livingShortage.date });
+      }
+    }
     state.transfers.forEach((t) => {
       if (IN_FLIGHT.includes(t.status) && t.date < today) {
         const to = accountById(state, t.toId);
@@ -926,7 +978,7 @@
     recordedOn, needsReminder, markNoSpend,
     uid, yen, evalAmount, isFormula, WINDFALL, TRANSFER_STATUS, IN_FLIGHT,
     defaultCategories, emptyState, normalizeState,
-    accountById, categoryById, totalAccountIds, sumBalances,
+    accountById, categoryById, livingAccounts, setLivingAccounts, balanceError, totalAccountIds, sumBalances,
     addTransaction, removeTransaction, updateTransaction, confirmTransaction, completeOccurrence,
     canUnconfirm, unconfirmTransaction,
     overrideOccurrence, skipOccurrence,
