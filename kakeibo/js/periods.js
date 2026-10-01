@@ -179,6 +179,7 @@
       { label: "給料", amount: 180000, onPayday: true, days: [25], categoryId: "cat_salary", startDate: "2026-10-01", overrides: { "2026-11": 190000, "2026-12": 200000 } },
     ],
     oneOffs: [
+      { date: "2026-10-05", label: "入金", amount: 27853, categoryId: "cat_windfall" },
       { date: "2026-10-05", label: "d払い", amount: -12990, categoryId: "cat_repay", other: true },
       { date: "2026-10-07", label: "Cashacari", amount: -13490, categoryId: "cat_repay", other: true },
       { date: "2026-10-15", label: "楽天モバイル", amount: -3281, categoryId: "cat_fixed", other: true },

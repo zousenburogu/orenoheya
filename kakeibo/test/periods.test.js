@@ -16,7 +16,7 @@ test("初期データ：給料日は10/23（10/25が日曜のため前の平日�
   const { s, res } = setup();
   assert.equal(K.paydayOfMonth(s.settings, "2026-10"), "2026-10-23");
   assert.equal(res.recurrences, 5);
-  assert.equal(res.oneOffs, 9);
+  assert.equal(res.oneOffs, 10);
   assert.equal(s.accounts.find((a) => a.name === "別口座").includeInTotal, false);
 });
 
@@ -106,7 +106,7 @@ test("まっさらにして初期データ：未記入（残高）と仮・概�
   const { state: s, added } = P.freshStart({ today: TODAY });
   assert.equal(s.accounts.length, 2);
   assert.equal(added.recurrences, 5);
-  assert.equal(added.oneOffs, 9);
+  assert.equal(added.oneOffs, 10);
   assert.equal(s.transactions.filter((t) => t.status === "actual").length, 0);
   // 集計は初期データどおり
   const rows = P.periodTable(s, { today: TODAY, count: 3 });
@@ -122,4 +122,19 @@ test("まっさらにして初期データ：未記入（残高）と仮・概�
   s.recurrences.forEach((r) => delete r.tentative);
   s.settings.dismissedSetup = ["annualBonus", "goal", "payslip"];
   assert.deepEqual(P.setupChecklist(s, { today: TODAY }), []);
+});
+
+test("10/5 の入金 27,853円（メイン口座・確定）", () => {
+  const { s } = setup();
+  const t = s.transactions.find((x) => x.date === "2026-10-05" && x.amount > 0);
+  assert.equal(t.amount, 27853);
+  assert.equal(t.accountId, "main");
+  assert.equal(t.status, "planned");
+  assert.equal(t.tentative, undefined);
+  // 今の給料期間（9/25〜10/22）の収入に入り、10/23 からの表は指示書どおり
+  assert.equal(P.periodTable(s, { today: TODAY, count: 1, includeCurrent: true })[0].income, 27853);
+  assert.equal(P.periodTable(s, { today: TODAY, count: 3 })[2].cumulative, 678741);
+  // 残高予測にも 10/5 に +27,853 で入る
+  const f = K.forecast(s, { today: TODAY, end: "2026-10-06", scope: ["main"] });
+  assert.ok(f.days.find((d) => d.date === "2026-10-05").events.some((e) => e.amount === 27853));
 });
