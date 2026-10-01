@@ -903,7 +903,7 @@
     const scopeIds = opts.accountIds || null;
     const items = [];
     state.transactions.forEach((t) => {
-      if (t.status !== "actual" || t.amount >= 0) return;
+      if (t.status !== "actual" || t.amount >= 0 || t.adjustment) return;
       if (t.date < start || t.date > end) return;
       if (scopeIds && !scopeIds.includes(t.accountId)) return;
       items.push({ date: t.date, label: t.label, amount: -t.amount, categoryId: t.categoryId, accountId: t.accountId, kind: "actual" });

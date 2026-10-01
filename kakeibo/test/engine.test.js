@@ -485,3 +485,11 @@ test("残高のない口座はエラー", () => {
   assert.match(K.balanceError(s, "life", 30000), /残高（¥20,000）が足りません/);
   assert.equal(K.balanceError(s, "life", 20000), null);
 });
+
+test("残高調整はカテゴリ分析に出ない", () => {
+  const s = setup();
+  K.addTransaction(s, { accountId: "bank", date: "2026-10-01", amount: -3000, categoryId: "cat_other", label: "残高調整", balanceAlreadyReflected: true, adjustment: true });
+  K.addTransaction(s, { accountId: "bank", date: "2026-10-01", amount: -500, categoryId: "cat_other", label: "ガム" });
+  const c = K.categorySummary(s, "2026-10-01", "2026-10-31", { today: "2026-10-01" });
+  assert.equal(c.total, 500);
+});
