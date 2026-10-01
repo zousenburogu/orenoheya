@@ -37,6 +37,7 @@
     settings: {
       livingAccountId: "",
       livingAccountIds: [],
+      coverAccountIds: [],
       weekdayCost: 0,
       holidayCost: 0,
       miscMonthly: 0,
@@ -179,6 +180,14 @@
   const setLivingAccounts = (state, ids) => {
     state.settings.livingAccountIds = [...new Set(ids)].filter((id) => accountById(state, id));
     state.settings.livingAccountId = state.settings.livingAccountIds[0] || "";
+  };
+  // 残高が足りないとき不足分を立て替える口座（優先順）
+  const coverAccounts = (state) => {
+    const ids = Array.isArray(state.settings.coverAccountIds) ? state.settings.coverAccountIds : [];
+    return [...new Set(ids)].filter((id) => accountById(state, id));
+  };
+  const setCoverAccounts = (state, ids) => {
+    state.settings.coverAccountIds = [...new Set(ids)].filter((id) => accountById(state, id));
   };
   const categoryById = (state, id) => state.categories.find((c) => c.id === id);
 
@@ -567,6 +576,7 @@
       .filter((t) => t.status === "actual" && t.date >= today && !t.adjustment && ids.includes(t.accountId))
       .sort((a, b) => (a.date < b.date ? -1 : 1));
 
+    const cover = coverAccounts(state);
     const days = [];
     let i = 0;
     let livingShortage = null;
@@ -590,6 +600,26 @@
           continue;
         }
         if (balances[e.accountId] === undefined) continue;
+        if (cover.length && e.amount < 0 && !e.transfer && -e.amount > Math.max(0, balances[e.accountId])) {
+          // 残高が足りない支出は、立て替え口座から順に不足分を払う（全部足りなければ元の口座がマイナス）
+          let need = -e.amount - Math.max(0, balances[e.accountId]);
+          const covers = [];
+          cover.forEach((id) => {
+            if (need <= 0 || id === e.accountId || balances[id] === undefined) return;
+            const take = Math.min(need, Math.max(0, balances[id]));
+            if (take <= 0) return;
+            balances[id] -= take;
+            need -= take;
+            covers.push({ id, take });
+          });
+          const own = e.amount + covers.reduce((s, c) => s + c.take, 0);
+          balances[e.accountId] += own;
+          if (ids.includes(e.accountId)) dayEvents.push(Object.assign({}, e, { amount: own }));
+          covers.forEach((c) => {
+            if (ids.includes(c.id)) dayEvents.push(Object.assign({}, e, { accountId: c.id, amount: -c.take, label: `${e.label}（${(accountById(state, e.accountId) || {}).name || "?"}の不足分）` }));
+          });
+          continue;
+        }
         balances[e.accountId] += e.amount;
         if (ids.includes(e.accountId)) dayEvents.push(e);
       }
@@ -978,7 +1008,7 @@
     recordedOn, needsReminder, markNoSpend,
     uid, yen, evalAmount, isFormula, WINDFALL, TRANSFER_STATUS, IN_FLIGHT,
     defaultCategories, emptyState, normalizeState,
-    accountById, categoryById, livingAccounts, setLivingAccounts, balanceError, totalAccountIds, sumBalances,
+    accountById, categoryById, livingAccounts, setLivingAccounts, coverAccounts, setCoverAccounts, balanceError, totalAccountIds, sumBalances,
     addTransaction, removeTransaction, updateTransaction, confirmTransaction, completeOccurrence,
     canUnconfirm, unconfirmTransaction,
     overrideOccurrence, skipOccurrence,

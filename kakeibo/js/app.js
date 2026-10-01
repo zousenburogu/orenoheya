@@ -1040,6 +1040,21 @@
     });
   };
 
+  const viewCover = () => {
+    const sel = K.coverAccounts(state);
+    const ordered = [...sel.map((id) => K.accountById(state, id)), ...state.accounts.filter((a) => !sel.includes(a.id))];
+    return `<section class="card"><h3>残高が足りないとき立て替える口座</h3>
+      <p class="tiny" style="margin:0 0 6px">支出で口座の残高が足りなくなる（マイナスになる）見込みのとき、不足分を上から順に、ここで選んだ口座から払う見込みで予測します。生活費以外の支出・定期の支払いも対象です（口座間の振替は除く）。</p>
+      <ul class="list">${ordered.map((a) => {
+        const k = sel.indexOf(a.id);
+        return `<li><div class="row" style="gap:10px">
+          <input type="checkbox" data-cover-toggle="${esc(a.id)}" ${k >= 0 ? "checked" : ""} aria-label="${esc(a.name)}で不足分を立て替える">
+          ${k >= 0 ? `<span class="badge accent">${"①②③④⑤⑥⑦⑧⑨"[k] || k + 1}</span>` : ""}
+          <div class="grow"><div style="word-break:break-all">${esc(a.name)}</div><div class="meta num">残高 ${esc(yen(a.balance))}${a.includeInTotal === false ? "・合計外" : ""}</div></div>
+          ${k >= 0 && sel.length > 1 ? `<span class="actions"><button class="small ghost" data-action="cover-up" data-id="${esc(a.id)}" ${k === 0 ? "disabled" : ""} aria-label="上へ">↑</button><button class="small ghost" data-action="cover-down" data-id="${esc(a.id)}" ${k === sel.length - 1 ? "disabled" : ""} aria-label="下へ">↓</button></span>` : ""}</div></li>`;
+      }).join("")}</ul></section>`;
+  };
+
   const viewLiving = () => {
     const s = state.settings;
     const t = today();
@@ -1064,6 +1079,7 @@
           ${k >= 0 && sel.length > 1 ? `<span class="actions"><button class="small ghost" data-action="living-up" data-id="${esc(a.id)}" ${k === 0 ? "disabled" : ""} aria-label="上へ">↑</button><button class="small ghost" data-action="living-down" data-id="${esc(a.id)}" ${k === sel.length - 1 ? "disabled" : ""} aria-label="下へ">↓</button></span>` : ""}</div>
           ${err ? `<div class="field-error">${esc(err)}${sel.length > 1 && k < sel.length - 1 ? "。次の口座から払う見込みにします" : ""} <button class="link small" data-action="account-balance" data-id="${esc(a.id)}">残高を更新</button></div>` : ""}</li>`;
       }).join("")}</ul></section>
+      ${viewCover()}
       <section class="card"><form class="stack" data-form="living">
       <div class="grid2"><label class="field">平日 1日あたり<input name="weekdayCost" inputmode="numeric" value="${esc(s.weekdayCost)}"></label>
       <label class="field">休日 1日あたり<input name="holidayCost" inputmode="numeric" value="${esc(s.holidayCost)}"></label></div>
@@ -1174,6 +1190,16 @@
     periods: ["給料期間の収支", viewPeriods],
   };
   const TABS = { home: ["ホーム", viewHome], forecast: ["残高予測", viewForecast], input: ["入力", viewInput], analysis: ["カテゴリ分析", viewAnalysis], menu: ["メニュー", viewMenu] };
+
+  const moveCover = (id, dir) => {
+    const list = K.coverAccounts(state);
+    const i = list.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    K.setCoverAccounts(state, list);
+    commit();
+  };
 
   const moveLiving = (id, dir) => {
     const list = K.livingAccounts(state);
@@ -2003,6 +2029,8 @@
         toast("元に戻しました");
       });
     },
+    "cover-up": (b) => moveCover(b.dataset.id, -1),
+    "cover-down": (b) => moveCover(b.dataset.id, 1),
     "living-up": (b) => moveLiving(b.dataset.id, -1),
     "living-down": (b) => moveLiving(b.dataset.id, 1),
     "goal-new": () => goalSheet(null),
@@ -2093,6 +2121,14 @@
           toast("JSONを読み込めませんでした");
         }
       });
+      return;
+    }
+    if (t.dataset.coverToggle) {
+      const cur = K.coverAccounts(state);
+      const id = t.dataset.coverToggle;
+      K.setCoverAccounts(state, t.checked ? [...cur, id] : cur.filter((x) => x !== id));
+      commit();
+      toast("保存しました");
       return;
     }
     if (t.dataset.livingToggle) {

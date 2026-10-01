@@ -134,6 +134,27 @@ test("振替：着金予定日超過でアラート", () => {
   assert.ok(a.some((x) => x.kind === "overdue-transfer"));
 });
 
+test("立て替え口座：残高が足りない支出の不足分を順に別口座から払う", () => {
+  const s = setup();
+  s.settings.livingAccountIds = [];
+  s.settings.livingAccountId = "";
+  s.accounts.find((a) => a.id === "bank").balance = 10000;
+  s.accounts.find((a) => a.id === "life").balance = 5000;
+  const w = [{ id: "w", date: "2026-09-26", amount: -30000, accountId: "bank", label: "家電" }];
+  const none = K.forecast(s, { today: "2026-09-25", end: "2026-09-27", whatIf: w });
+  assert.equal(none.days[1].byAccount.bank, -20000);
+  K.setCoverAccounts(s, ["life", "fx"]);
+  const f = K.forecast(s, { today: "2026-09-25", end: "2026-09-27", whatIf: w });
+  const d = f.days[1].byAccount;
+  assert.equal(d.bank, 0);
+  assert.equal(d.life, 0);
+  assert.equal(d.fx, 35000);
+  assert.equal(f.endBalance, none.endBalance);
+  assert.equal(f.days[1].events.length, 3);
+  K.setCoverAccounts(s, ["life"]);
+  assert.equal(K.forecast(s, { today: "2026-09-25", end: "2026-09-27", whatIf: w }).days[1].byAccount.bank, -15000);
+});
+
 test("What-if：仮の支出は反映されるが保存されない", () => {
   const s = setup();
   const w = [{ id: "w", date: "2026-09-26", amount: -30000, accountId: "bank", label: "イヤホン" }];
