@@ -52,6 +52,7 @@
       annualBonus: 0,
       noSpendDates: [],
       budget: { start: "", end: "", amount: 0, includeMisc: false },
+      dismissedSetup: [],
     },
   });
 

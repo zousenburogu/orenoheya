@@ -101,3 +101,25 @@ test("リボ返済シミュレーター", () => {
   // 利息以下の返済額だと終わらない
   assert.equal(P.revolving({ balance: 1000000, payment: 10000, apr: 18, startMonth: "2026-11" }).neverEnds, true);
 });
+
+test("まっさらにして初期データ：未記入（残高）と仮・概算をチェックリストに出す", () => {
+  const { state: s, added } = P.freshStart({ today: TODAY });
+  assert.equal(s.accounts.length, 2);
+  assert.equal(added.recurrences, 5);
+  assert.equal(added.oneOffs, 9);
+  assert.equal(s.transactions.filter((t) => t.status === "actual").length, 0);
+  // 集計は初期データどおり
+  const rows = P.periodTable(s, { today: TODAY, count: 3 });
+  assert.deepEqual(rows.map((r) => r.cumulative), [82783, 578612, 678741]);
+  const list = P.setupChecklist(s, { today: TODAY });
+  assert.deepEqual(list.filter((x) => x.level === "required").map((x) => x.text), ["「メイン口座」の今の残高", "「別口座」の今の残高"]);
+  const tent = list.find((x) => x.key === "tentative");
+  assert.equal(tent.items.length, 5); // 電気代・PayPay×2・d払い・ボーナス
+  assert.deepEqual(list.filter((x) => x.level === "optional").map((x) => x.key), ["annualBonus", "goal", "payslip"]);
+  // 残高を入れる・概算を直す・任意を「使わない」にすると消える
+  s.accounts.forEach((a) => (a.balanceSet = true));
+  s.transactions.forEach((t) => delete t.tentative);
+  s.recurrences.forEach((r) => delete r.tentative);
+  s.settings.dismissedSetup = ["annualBonus", "goal", "payslip"];
+  assert.deepEqual(P.setupChecklist(s, { today: TODAY }), []);
+});

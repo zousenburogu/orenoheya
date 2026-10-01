@@ -522,6 +522,19 @@ label.field { position: relative; }
 .mark.out { background: var(--s2); }
 .mark.other { background: var(--surface); color: var(--text-2); border: 1px dashed var(--text-2); border-radius: 3px; line-height: 12px; font-weight: 600; }
 .cal-pay { font-size: 9px; color: var(--accent); font-weight: 700; }
+.setup-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  margin-bottom: 14px;
+  background: var(--info-bg);
+  border: 1px solid var(--border);
+}
+.setup-bar .icon { width: 20px; height: 20px; flex: none; color: var(--accent); }
+.setup-bar.required { background: var(--warning-bg); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.setup-bar.required .icon { color: #b07a00; }
 .empty { text-align: center; color: var(--text-2); padding: 24px 8px; }
 .empty p { margin: 0 0 12px; }
 details summary { cursor: pointer; color: var(--text-2); font-size: 14px; }

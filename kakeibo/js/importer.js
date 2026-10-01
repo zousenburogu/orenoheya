@@ -278,6 +278,7 @@
         const diff = r.amount - Math.round(a.balance || 0);
         if (diff) K.addTransaction(state, { accountId: a.id, date: today, amount: diff, categoryId: "cat_other", label: "残高調整（画像取り込み）", status: "actual", balanceAlreadyReflected: true, adjustment: true });
         a.balance = r.amount;
+        a.balanceSet = true;
       } else if (r.type === "bill") {
         if (r.match && r.useMatch !== false) {
           K.overrideOccurrence(state, r.match.recurrenceId, r.match.original, { amount: -r.amount, date: r.date });

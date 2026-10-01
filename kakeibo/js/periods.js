@@ -173,7 +173,7 @@
     budget: { start: "2026-10-01", end: "2026-10-22", amount: 37797, includeMisc: false },
     recurrences: [
       { label: "楽天モバイル", amount: -3281, days: [15], categoryId: "cat_fixed", startDate: "2026-11-01" },
-      { label: "電気代", amount: -11000, onPayday: true, days: [25], categoryId: "cat_fixed", startDate: "2026-10-01" },
+      { label: "電気代", amount: -11000, onPayday: true, days: [25], categoryId: "cat_fixed", startDate: "2026-10-01", tentative: "概算" },
       { label: "YouTube Premium", amount: -980, days: [25], categoryId: "cat_fixed", startDate: "2026-10-01" },
       { label: "Cashacari", amount: -7710, days: [7], categoryId: "cat_repay", startDate: "2026-11-01", endDate: "2027-01-31" },
       { label: "給料", amount: 180000, onPayday: true, days: [25], categoryId: "cat_salary", startDate: "2026-10-01", overrides: { "2026-11": 190000, "2026-12": 200000 } },
@@ -184,10 +184,10 @@
       { date: "2026-10-15", label: "楽天モバイル", amount: -3281, categoryId: "cat_fixed", other: true },
       { date: "2026-10-27", label: "PayPay", amount: -2203, categoryId: "cat_repay" },
       { date: "2026-11-05", label: "d払い", amount: -12343, categoryId: "cat_repay" },
-      { date: "2026-11-27", label: "PayPay（リボ・利息込みの概算）", amount: -5300, categoryId: "cat_repay" },
-      { date: "2026-12-05", label: "d払い（概算）", amount: -15500, categoryId: "cat_repay" },
-      { date: "2026-12-27", label: "PayPay（リボ残りをボーナスで完済・概算）", amount: -13200, categoryId: "cat_repay" },
-      { date: "2026-12-04", label: "ボーナス（日付は仮）", amount: 400000, categoryId: "cat_bonus" },
+      { date: "2026-11-27", label: "PayPay（リボ）", amount: -5300, categoryId: "cat_repay", tentative: "利息込みの概算" },
+      { date: "2026-12-05", label: "d払い", amount: -15500, categoryId: "cat_repay", tentative: "概算" },
+      { date: "2026-12-27", label: "PayPay（リボ残りをボーナスで完済）", amount: -13200, categoryId: "cat_repay", tentative: "利息込みの概算" },
+      { date: "2026-12-04", label: "ボーナス", amount: 400000, categoryId: "cat_bonus", tentative: "12月上旬・日付は仮" },
     ],
   };
 
@@ -202,7 +202,7 @@
     if (!mainId || !K.accountById(state, mainId)) throw new Error("メイン口座を選んでください");
     let other = otherId && K.accountById(state, otherId);
     if (!other) {
-      other = { id: K.uid("acc"), name: "別口座", balance: 0, includeInTotal: false, note: "集計から除外する支払い用" };
+      other = { id: K.uid("acc"), name: "別口座", balance: 0, includeInTotal: false, note: "集計から除外する支払い用", balanceSet: false };
       state.accounts.push(other);
     }
     Object.assign(state.settings, INITIAL.settings);
@@ -220,6 +220,7 @@
         id: K.uid("rec"), label: src.label, amount: src.amount, days: src.days, onPayday: !!src.onPayday,
         intervalMonths: 1, adjust: "none", accountId: mainId, categoryId: src.categoryId,
         startDate: src.startDate, endDate: src.endDate || "", doneDates: [],
+        ...(src.tentative ? { tentative: src.tentative } : {}),
       };
       state.recurrences.push(r);
       added.recurrences++;
@@ -238,13 +239,51 @@
       K.addTransaction(state, {
         accountId: acc, date: src.date, amount: src.amount, categoryId: src.categoryId, label: src.label,
         status: src.date > (today || D.today()) ? "planned" : "actual",
+        ...(src.tentative ? { tentative: src.tentative } : {}),
       });
       added.oneOffs++;
     });
     return added;
   };
 
-  const api = { GROUP_LABEL, periodAt, periodFrom, listPeriods, periodItems, countDays, summarize, periodTable, budgetMode, monthItems, revolving, applyInitialData, INITIAL };
+  // まっさらな状態から初期データを入れる（口座は残高未記入のメイン口座と別口座）
+  const freshStart = ({ today } = {}) => {
+    const state = K.normalizeState(null);
+    const main = { id: K.uid("acc"), name: "メイン口座", balance: 0, includeInTotal: true, note: "給料の入金・支払い", balanceSet: false };
+    state.accounts.push(main);
+    state.settings.salaryAccountId = main.id;
+    state.settings.livingAccountId = main.id;
+    const added = applyInitialData(state, { mainId: main.id, otherId: "", today });
+    return { state, added };
+  };
+
+  /**
+   * 未記入のチェックリスト。level: required（必須）/ check（仮・概算の確認）/ optional（任意。「使わない」で消せる）
+   */
+  const setupChecklist = (state, { today } = {}) => {
+    const t = today || D.today();
+    const out = [];
+    state.accounts.filter((a) => a.balanceSet === false).forEach((a) => {
+      out.push({ key: `balance:${a.id}`, level: "required", text: `「${a.name}」の今の残高`, target: { type: "balance", id: a.id } });
+    });
+    const tentative = [
+      ...state.transactions.filter((x) => x.tentative && x.status === "planned" && x.date >= t).map((x) => ({ id: x.id, kind: "tx", label: x.label, note: x.tentative, date: x.date })),
+      ...state.recurrences.filter((r) => r.tentative).map((r) => ({ id: r.id, kind: "rec", label: r.label, note: r.tentative })),
+    ];
+    if (tentative.length) out.push({ key: "tentative", level: "check", text: `仮・概算の予定 ${tentative.length}件（${tentative.map((x) => x.label).join("、")}）`, target: { type: "tentative" }, items: tentative });
+    const dismissed = state.settings.dismissedSetup || [];
+    const optional = [
+      [!Number(state.settings.annualBonus), "annualBonus", "年間のボーナス額（稼ぐ目安カレンダー）", { type: "earncal" }],
+      [!state.goals.length, "goal", "貯金の目標（誕生日・何歳まで）", { type: "goals" }],
+      [!state.payslips.length, "payslip", "給与明細（残業の時給換算・年収の実績に使う）", { type: "payslips" }],
+    ];
+    optional.forEach(([missing, key, text, target]) => {
+      if (missing && !dismissed.includes(key)) out.push({ key, level: "optional", text, target });
+    });
+    return out;
+  };
+
+  const api = { GROUP_LABEL, freshStart, setupChecklist, periodAt, periodFrom, listPeriods, periodItems, countDays, summarize, periodTable, budgetMode, monthItems, revolving, applyInitialData, INITIAL };
   if (isNode) module.exports = api;
   else root.KPeriods = api;
 })(typeof window !== "undefined" ? window : globalThis);

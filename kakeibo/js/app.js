@@ -865,7 +865,8 @@
   };
 
   const perItemRow = (i, { actions = false } = {}) => {
-    const badge = `<span class="badge">${P.GROUP_LABEL[i.group]}</span>${i.other ? ' <span class="badge">別口座・集計外</span>' : ""}`;
+    const src = i.source === "recurrence" ? state.recurrences.find((r) => r.id === i.refId) : state.transactions.find((t) => t.id === i.refId);
+    const badge = `<span class="badge">${P.GROUP_LABEL[i.group]}</span>${i.other ? ' <span class="badge">別口座・集計外</span>' : ""}${src && src.tentative ? ` <span class="badge warn">仮：${esc(src.tentative)}</span>` : ""}`;
     const act = !actions ? "" : i.source === "recurrence"
       ? `<span class="actions"><button class="small ghost" data-action="occ-edit" data-id="${esc(i.refId)}" data-date="${esc(i.original)}">変更</button></span>`
       : `<span class="actions"><button class="small ghost" data-action="tx-edit" data-id="${esc(i.refId)}">編集</button></span>`;
@@ -911,12 +912,12 @@
       return a ? `${a.name}${a.includeInTotal === false ? "（別口座・集計外）" : ""}` : "";
     };
     const oneOffs = state.transactions.filter((x) => x.status === "planned" && !x.recurrenceId).sort((a, b) => (a.date < b.date ? -1 : 1));
-    let html = `<section class="row wrap" style="gap:8px"><button class="primary" data-action="plan-new">＋ 予定を追加</button><button data-action="plan-initial">指示書の初期データを追加</button></section>`;
+    let html = `<section class="row wrap" style="gap:8px"><button class="primary" data-action="plan-new">＋ 予定を追加</button><button data-action="plan-initial">指示書の初期データを追加</button><button class="danger" data-action="fresh-start">まっさらにして初期データを入れる</button></section>`;
     html += `<section class="card"><h3>毎月の予定</h3><ul class="list">${recs.map((r) => `<li><div class="grow"><div class="ellipsis">${esc(r.label)} <span class="badge">${esc(groupName(r))}</span></div>
-      <div class="meta">${esc(describeDays(r))}${!r.onPayday && r.startDate ? `・${esc(r.startDate.slice(0, 7).replace("-", "/"))}〜${esc(r.endDate ? r.endDate.slice(0, 7).replace("-", "/") : "")}` : ""}・${esc(otherName(r.accountId))}</div></div>
+      <div class="meta">${r.tentative ? `<span class="badge warn">仮：${esc(r.tentative)}</span> ` : ""}${esc(describeDays(r))}${!r.onPayday && r.startDate ? `・${esc(r.startDate.slice(0, 7).replace("-", "/"))}〜${esc(r.endDate ? r.endDate.slice(0, 7).replace("-", "/") : "")}` : ""}・${esc(otherName(r.accountId))}</div></div>
       <span class="amt">${signed(r.amount)}</span><span class="actions"><button class="small ghost" data-action="rec-edit" data-id="${esc(r.id)}">編集</button></span></li>`).join("") || '<li class="small muted">なし</li>'}</ul>
       <p class="tiny" style="margin:6px 0 0">給料など月ごとに金額が違うものは「カレンダー」の予定一覧の「変更」でその月だけ上書きできます。</p></section>`;
-    html += `<section class="card"><h3>単発の予定</h3><ul class="list">${oneOffs.map((x) => `<li${x.date < t ? ' style="opacity:.7"' : ""}><span class="date">${esc(ymd2(x.date))}</span><div class="grow"><div class="ellipsis">${esc(x.label)} <span class="badge">${esc(x.amount > 0 ? "収入" : P.GROUP_LABEL[(K.categoryById(state, x.categoryId) || {}).group || "fixed"])}</span></div><div class="meta">${esc(otherName(x.accountId))}</div></div>
+    html += `<section class="card"><h3>単発の予定</h3><ul class="list">${oneOffs.map((x) => `<li${x.date < t ? ' style="opacity:.7"' : ""}><span class="date">${esc(ymd2(x.date))}</span><div class="grow"><div class="ellipsis">${esc(x.label)} <span class="badge">${esc(x.amount > 0 ? "収入" : P.GROUP_LABEL[(K.categoryById(state, x.categoryId) || {}).group || "fixed"])}</span></div><div class="meta">${x.tentative ? `<span class="badge warn">仮：${esc(x.tentative)}</span> ` : ""}${esc(otherName(x.accountId))}</div></div>
       <span class="amt">${signed(x.amount)}</span><span class="actions"><button class="small ghost" data-action="tx-edit" data-id="${esc(x.id)}">編集</button></span></li>`).join("") || '<li class="small muted">なし</li>'}</ul></section>`;
     return html;
   };
@@ -1140,7 +1141,7 @@
         <p class="tiny" style="margin:8px 0 0">指定の時刻を過ぎて今日の記録がないと、ホームに知らせが出ます（アプリを開いたまま時刻になったときも）。アプリを閉じているときの通知は、iPhone のリマインダーアプリで「毎日・この時刻」の繰り返しを登録してください。空欄で保存するとオフになります。</p></section>
       <section class="card"><h3>データ</h3><p class="tiny">データはこの端末のブラウザ内にだけ保存されます。機種変更やブラウザのデータ削除に備えて、ときどき書き出してください。</p>
       <div class="row wrap"><button data-action="export">JSONを書き出す</button><label class="btn" style="display:inline-flex;align-items:center">JSONを読み込む<input type="file" accept="application/json,.json" data-action="import" hidden></label>
-      <button data-action="sample">サンプルデータを読み込む</button><button class="danger" data-action="reset">すべて削除</button></div></section>
+      <button data-action="sample">サンプルデータを読み込む</button><button class="danger" data-action="fresh-start">まっさらにして初期データを入れる</button><button class="danger" data-action="reset">すべて削除</button></div></section>
       <section class="card"><h3>アプリのバージョン</h3><div class="row between wrap"><span class="small muted num">${esc(document.documentElement.dataset.version || "-")}</span><button data-action="check-update">更新を確認</button></div>
       <p class="tiny">表示が古いままのときは「更新を確認」を押してください。入力したデータは消えません。</p></section>`;
   };
@@ -1159,6 +1160,34 @@
   };
   const TABS = { home: ["ホーム", viewHome], forecast: ["残高予測", viewForecast], input: ["入力", viewInput], analysis: ["カテゴリ分析", viewAnalysis], menu: ["メニュー", viewMenu] };
 
+  /* ---------- 未記入の通知バー ---------- */
+
+  const setupBar = () => {
+    if (!state.accounts.length || ui.setupHidden) return "";
+    const list = P.setupChecklist(state, { today: today() });
+    if (!list.length) return "";
+    const req = list.filter((x) => x.level === "required").length;
+    return `<section class="setup-bar ${req ? "required" : ""}" role="status">
+      ${ICONS[req ? "warning" : "info"]}<div class="grow"><b>未記入が${list.length}件あります</b>${req ? `<span class="small">（必須 ${req}件）</span>` : ""}
+      <div class="tiny">${esc(list.slice(0, 2).map((x) => x.text.replace(/（.*$/, "")).join("・"))}${list.length > 2 ? " など" : ""}</div></div>
+      <button class="small primary" data-action="setup-open">確認する</button>
+      ${req ? "" : '<button class="small ghost" data-action="setup-hide" aria-label="今は閉じる">×</button>'}</section>`;
+  };
+
+  const LEVEL_TEXT = { required: "必須", check: "確認", optional: "任意" };
+  const setupSheet = () => {
+    const list = P.setupChecklist(state, { today: today() });
+    sheetActions = {};
+    if (!list.length) return toast("未記入はありません");
+    openSheet("未記入の項目", `<div style="display:grid;gap:12px">
+      <ul class="list">${list.map((x) => `<li style="display:block">
+        <div class="row" style="gap:8px"><span class="badge ${x.level === "required" ? "warn" : x.level === "check" ? "accent" : ""}">${LEVEL_TEXT[x.level]}</span><b class="grow">${esc(x.text.replace(/（.*$/, ""))}</b></div>
+        ${x.items ? `<ul class="tiny" style="margin:6px 0;padding-left:18px">${x.items.map((i) => `<li>${esc(i.label)}${i.date ? `（${esc(D.dayLabel(i.date))}）` : ""}：${esc(i.note)} <button type="button" class="link small" data-action="setup-tent-edit" data-kind="${i.kind}" data-id="${esc(i.id)}">直す</button>・<button type="button" class="link small" data-action="setup-tent-ok" data-kind="${i.kind}" data-id="${esc(i.id)}">このままでOK</button></li>`).join("")}</ul>` : ""}
+        <div class="row" style="gap:8px;margin-top:6px">${x.target.type === "tentative" ? "" : `<button type="button" class="small primary" data-action="setup-go" data-key="${esc(x.key)}">入力する</button>`}
+        ${x.level === "optional" ? `<button type="button" class="small ghost" data-action="setup-dismiss" data-key="${esc(x.key)}">使わない</button>` : ""}</div></li>`).join("")}</ul>
+      <p class="tiny" style="margin:0">必須は入力するまで毎回表示します。任意は「使わない」で消せます。仮・概算は金額や日付が決まったら「直す」、そのままで良ければ「このままでOK」。</p></div>`, () => {});
+  };
+
   /* ---------- 描画 ---------- */
 
   const render = () => {
@@ -1170,7 +1199,7 @@
       if (b.dataset.tab === ui.tab) b.setAttribute("aria-current", "page");
       else b.removeAttribute("aria-current");
     });
-    app.innerHTML = view();
+    app.innerHTML = setupBar() + view();
     enhanceCalc(app);
     drawCharts();
     saveUi();
@@ -1261,6 +1290,8 @@
   $("#sheetClose").addEventListener("click", closeSheet);
   // 閉じたシートの中身は残さない（Esc で閉じた場合も）
   sheet.addEventListener("close", () => {
+    // 閉じた直後に別のシートを開いた場合は消さない（close イベントは後から届く）
+    if (sheet.open) return;
     $("#sheetBody").innerHTML = "";
     sheetSubmit = null;
     sheetOnInput = null;
@@ -1390,7 +1421,7 @@
       } else {
         const balance = money(fd.get("balance"));
         if (Number.isNaN(balance)) return toast("残高を数字で入力してください"), false;
-        const acc = { id: K.uid("acc"), name, balance, includeInTotal: fd.get("includeInTotal") === "on", note: fd.get("note") };
+        const acc = { id: K.uid("acc"), name, balance, balanceSet: true, includeInTotal: fd.get("includeInTotal") === "on", note: fd.get("note") };
         state.accounts.push(acc);
         if (!state.settings.salaryAccountId) state.settings.salaryAccountId = acc.id;
         else if (!state.settings.livingAccountId && acc.includeInTotal) state.settings.livingAccountId = acc.id;
@@ -1412,6 +1443,7 @@
         K.addTransaction(state, { accountId: a.id, date: today(), amount: diff, categoryId: diff < 0 ? "cat_other" : "cat_other", label: "残高調整", status: "actual", balanceAlreadyReflected: true, adjustment: true });
       }
       a.balance = b;
+      a.balanceSet = true;
       commit();
       toast(`残高を${yen(b)}に更新しました`);
     });
@@ -1443,6 +1475,7 @@
         categoryId: fd.get("categoryId"),
         label: fd.get("label"),
       });
+      delete x.tentative; // 編集したら「仮・概算」は確認済み
       commit();
     });
   };
@@ -1493,8 +1526,10 @@
         startDate: fd.get("startDate") || "",
         endDate: fd.get("endDate") || "",
       };
-      if (r) Object.assign(r, data);
-      else state.recurrences.push(Object.assign({ id: K.uid("rec"), doneDates: [] }, data));
+      if (r) {
+        Object.assign(r, data);
+        delete r.tentative;
+      } else state.recurrences.push(Object.assign({ id: K.uid("rec"), doneDates: [] }, data));
       commit();
     });
   };
@@ -1865,6 +1900,58 @@
     },
     "plan-new": () => planSheet(),
     "plan-initial": () => initialSheet(),
+    "setup-open": () => setupSheet(),
+    "setup-hide": () => {
+      ui.setupHidden = true;
+      render();
+    },
+    "setup-go": (b) => {
+      const item = P.setupChecklist(state, { today: today() }).find((x) => x.key === b.dataset.key);
+      if (!item) return;
+      closeSheet();
+      const tg = item.target;
+      if (tg.type === "balance") return balanceSheet(K.accountById(state, tg.id));
+      ui.tab = "menu";
+      if (tg.type === "earncal") {
+        ui.sub = "earncal";
+        ui.calMode = "income";
+      } else ui.sub = tg.type;
+      render();
+      window.scrollTo(0, 0);
+    },
+    "setup-dismiss": (b) => {
+      state.settings.dismissedSetup = [...new Set([...(state.settings.dismissedSetup || []), b.dataset.key])];
+      commit();
+      setupSheet();
+    },
+    "setup-tent-ok": (b) => {
+      const obj = (b.dataset.kind === "rec" ? state.recurrences : state.transactions).find((x) => x.id === b.dataset.id);
+      if (obj) delete obj.tentative;
+      commit();
+      if (P.setupChecklist(state, { today: today() }).length) setupSheet();
+      else closeSheet();
+    },
+    "setup-tent-edit": (b) => {
+      closeSheet();
+      if (b.dataset.kind === "rec") recSheet(state.recurrences.find((x) => x.id === b.dataset.id));
+      else txSheet(state.transactions.find((x) => x.id === b.dataset.id));
+    },
+    "fresh-start": () => {
+      if (!confirm("今のデータをすべて消して、指示書の初期データ（2026年10月〜2027年1月）を入れます。\n\n念のため先に「設定・データ › JSONを書き出す」でバックアップしておくのがおすすめです。\n\n続けますか？")) return;
+      const before = JSON.stringify(state);
+      const { state: fresh } = P.freshStart({ today: today() });
+      state = fresh;
+      ui.tab = "home";
+      ui.sub = null;
+      ui.setupHidden = false;
+      commit();
+      window.scrollTo(0, 0);
+      toast("まっさらにして初期データを入れました", () => {
+        state = K.normalizeState(JSON.parse(before));
+        commit();
+        toast("元に戻しました");
+      });
+    },
     "goal-new": () => goalSheet(null),
     "goal-edit": (b) => goalSheet(state.goals.find((x) => x.id === b.dataset.id)),
     "cat-new": () => catSheet(null),
