@@ -461,17 +461,17 @@ test("生活費を複数口座から払う：残高がなくなったら次の�
   K.setLivingAccounts(s, ["paypay", "life"]);
   Object.assign(s.settings, { weekdayCost: 3000, holidayCost: 3000, miscMonthly: 0 });
   assert.equal(s.settings.livingAccountId, "paypay");
-  const f = K.forecast(s, { today: "2026-10-01", end: "2026-10-08" }); // 8日分 24,000円は 25,000円で足りる
-  // 1日目 3,000 は PayPay、2日目は PayPay 残り 2,000 ＋ 生活費口座 1,000
-  assert.equal(f.days[0].byAccount.paypay, 2000);
-  assert.equal(f.days[1].byAccount.paypay, 0);
-  assert.equal(f.days[1].byAccount.life, 19000);
+  // 1回分を払えない口座はギリギリまで使わず、次の口座へ移る
+  const f = K.forecast(s, { today: "2026-10-01", end: "2026-10-07" });
+  assert.equal(f.days[0].byAccount.paypay, 2000); // 1日目は PayPay
+  assert.equal(f.days[1].byAccount.paypay, 2000); // 2日目は残り 2,000 で払えないので生活費口座へ
+  assert.equal(f.days[1].byAccount.life, 17000);
   const day2 = f.days[1].events.filter((e) => e.source === "living");
-  assert.deepEqual(day2.map((e) => [e.accountId, e.amount]), [["life", -1000]]); // 合計対象は生活費口座の分だけ
+  assert.deepEqual(day2.map((e) => [e.accountId, e.amount]), [["life", -3000]]);
   assert.equal(f.livingShortage, null);
-  // 25,000 円では足りない → 9日目（25,000 ÷ 3,000 で 8日分＋α）で不足
+  // 生活費口座も 6日分（18,000）で残り 2,000 → 8日目は払える口座がなく不足
   const g = K.forecast(s, { today: "2026-10-01", end: "2026-10-20" });
-  assert.equal(g.livingShortage.date, "2026-10-09");
+  assert.equal(g.livingShortage.date, "2026-10-08");
   assert.ok(K.alerts(s, { today: "2026-10-01" }).some((a) => a.kind === "living-shortage"));
   // 以前の1口座の設定は自動で移る
   const old = K.normalizeState({ settings: { livingAccountId: "x" } });

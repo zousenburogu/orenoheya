@@ -585,18 +585,14 @@
       while (i < events.length && events[i].date === d) {
         const e = events[i++];
         if (e.payFrom && e.amount < 0) {
-          // 生活費・雑費は優先順に、残高のある口座から払う。足りなければ次の口座へ（全部足りなければ最後の口座がマイナス）
-          let need = -e.amount;
-          const available = e.payFrom.reduce((sum, id) => sum + Math.max(0, balances[id] || 0), 0);
-          if (available < need && !livingShortage) livingShortage = { date: d, accountIds: e.payFrom.slice() };
-          e.payFrom.forEach((id, k) => {
-            if (need <= 0 || balances[id] === undefined) return;
-            const take = k === e.payFrom.length - 1 ? need : Math.min(need, Math.max(0, balances[id]));
-            if (take <= 0) return;
-            balances[id] -= take;
-            need -= take;
-            if (ids.includes(id)) dayEvents.push(Object.assign({}, e, { accountId: id, amount: -take }));
-          });
+          // 生活費・雑費は1回分をまるごと払える最初の口座から払う（残高をギリギリまで使わず、払えなければ次の口座へ）。どれも払えなければ最後の口座がマイナス
+          const need = -e.amount;
+          const id = e.payFrom.find((x) => balances[x] !== undefined && balances[x] >= need);
+          if (!id && !livingShortage) livingShortage = { date: d, accountIds: e.payFrom.slice() };
+          const to = id || e.payFrom[e.payFrom.length - 1];
+          if (balances[to] === undefined) continue;
+          balances[to] -= need;
+          if (ids.includes(to)) dayEvents.push(Object.assign({}, e, { accountId: to }));
           continue;
         }
         if (balances[e.accountId] === undefined) continue;

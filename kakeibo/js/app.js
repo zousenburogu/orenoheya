@@ -1067,7 +1067,7 @@
     const ordered = [...sel.map((id) => K.accountById(state, id)), ...state.accounts.filter((a) => !sel.includes(a.id))];
     const allEmpty = sel.length && sel.every((id) => (K.accountById(state, id).balance || 0) <= 0);
     return `<section class="card"><h3>生活費を払う口座</h3>
-      <p class="tiny" style="margin:0 0 6px">複数選べます。上から順に使い、残高がなくなったら次の口座から払う見込みで予測します。</p>
+      <p class="tiny" style="margin:0 0 6px">複数選べます。上から順に、1回分（1日の生活費）を払える最初の口座から払う見込みで予測します。払えない額しか残っていない口座はギリギリまで使わず、次の口座へ移ります。</p>
       ${allEmpty ? alertBox("critical", "<div>選んだ口座はどれも残高がありません。生活費を払えない見込みです</div>") : ""}
       <ul class="list">${ordered.map((a) => {
         const k = sel.indexOf(a.id);
