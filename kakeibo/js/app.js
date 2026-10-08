@@ -5,6 +5,7 @@
   const K = window.Kakeibo;
   const I = window.KImport;
   const P = window.KPeriods;
+  const KEdits = window.KEdits;
   const D = window.KDates;
   const C = window.KChart;
   const yen = K.yen;
@@ -1023,6 +1024,73 @@
     sync();
   };
 
+  /* ---------- 修正ファイル（予定・収入の追加・変更・削除をJSONで一括適用） ---------- */
+
+  const EDITS_BACKUP_KEY = "kakeibo.beforeEdits";
+  const hasEditsBackup = () => {
+    try {
+      return !!localStorage.getItem(EDITS_BACKUP_KEY);
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const editsPreviewHtml = (res) => {
+    const c = res.count;
+    const icon = { ok: "", skip: "スキップ", fail: "適用しない" };
+    return `<div class="small" style="margin-bottom:6px">追加 ${c.add}・変更 ${c.change}・削除 ${c.delete}${c.skip ? `・スキップ ${c.skip}` : ""}${c.fail ? `・<b style="color:var(--critical)">適用しない ${c.fail}</b>` : ""}</div>
+      <ul class="list">${res.items.map((it) => `<li style="display:block">
+        <div class="row" style="gap:8px;align-items:flex-start"><span class="badge ${it.status === "fail" ? "" : "accent"}" style="flex:none">${esc(it.status === "ok" ? { add: "追加", change: "変更", delete: "削除" }[it.action] : icon[it.status])}</span>
+        <div class="grow small" style="word-break:break-all;${it.status === "fail" ? "color:var(--critical)" : ""}">${esc(it.text.replace(/^(追加|変更|削除): /, ""))}</div></div>
+        ${it.notes.map((n) => `<div class="tiny" style="margin:2px 0 0 0;color:var(--critical)">⚠ ${esc(n)}</div>`).join("")}</li>`).join("")}</ul>`;
+  };
+
+  const editsSheet = () => {
+    let edits = null;
+    sheetActions = {
+      preview: () => {
+        const box = $("#editsPreview");
+        const text = $("#editsText").value.trim();
+        edits = null;
+        $("#editsApply").hidden = true;
+        if (!text) {
+          box.innerHTML = '<p class="tiny" style="color:var(--critical)">修正ファイルのJSONを貼り付けるか、ファイルを選んでください</p>';
+          return false;
+        }
+        try {
+          edits = KEdits.parseEdits(text);
+        } catch (e) {
+          box.innerHTML = `<p class="tiny" style="color:var(--critical)">${esc(e.message)}</p>`;
+          return false;
+        }
+        const res = KEdits.preview(state, edits, { today: today() });
+        box.innerHTML = editsPreviewHtml(res) + (res.applicable ? '<p class="tiny">内容を確認して「適用する」を押すと反映されます。適用前のデータは自動でバックアップされます。</p>' : '<p class="tiny">適用できる行がありません。</p>');
+        $("#editsApply").hidden = !res.applicable;
+        return false;
+      },
+      apply: () => {
+        if (!edits) return false;
+        try {
+          localStorage.setItem(EDITS_BACKUP_KEY, JSON.stringify({ savedOn: today(), state }));
+        } catch (e) {
+          if (!confirm("適用前のバックアップを保存できませんでした（「元に戻す」は直後の数秒だけ使えます）。続けますか？")) return false;
+        }
+        let res;
+        undoable((r) => `修正を適用しました（追加${r.count.add}・変更${r.count.change}・削除${r.count.delete}${r.count.skip + r.count.fail ? `・対象外${r.count.skip + r.count.fail}` : ""}）`, () => {
+          res = KEdits.apply(state, edits, { today: today() });
+          return res;
+        });
+      },
+    };
+    openSheet("修正ファイルを読み込む", `<div style="display:grid;gap:12px">
+      <p class="small" style="margin:0">予定・収入の追加・変更・削除を、JSONの修正ファイルでまとめて反映します。いきなり適用はせず、先に差分を表示します。今のデータを置き換える「JSONを読み込む」とは別の機能です。</p>
+      <label class="btn" style="display:inline-flex;align-items:center;justify-self:start">ファイルを選ぶ<input type="file" accept="application/json,.json,text/plain" data-action="edits-file" hidden></label>
+      <label class="field">または、ここに貼り付け<textarea id="editsText" rows="7" placeholder='{"edits": [ {"action": "add", ...} ]}' style="font-family:monospace;font-size:12px"></textarea></label>
+      <button type="submit" data-sheet-action="preview">差分を確認</button>
+      <div id="editsPreview"></div>
+      <div class="sheet-foot"><button type="submit" class="primary" id="editsApply" data-sheet-action="apply" hidden>適用する</button></div></div>`, () => false);
+  };
+
   // 初期データはコードに入れず、JSONファイルを選んで読み込む（読み込み済みならそのまま実行）
   const withInitial = (run) => {
     if (P.hasInitial()) return run();
@@ -1200,6 +1268,7 @@
         <p class="tiny" style="margin:8px 0 0">指定の時刻を過ぎて今日の記録がないと、ホームに知らせが出ます（アプリを開いたまま時刻になったときも）。アプリを閉じているときの通知は、iPhone のリマインダーアプリで「毎日・この時刻」の繰り返しを登録してください。空欄で保存するとオフになります。</p></section>
       <section class="card"><h3>データ</h3><p class="tiny">データはこの端末のブラウザ内にだけ保存されます。機種変更やブラウザのデータ削除に備えて、ときどき書き出してください。</p>
       <div class="row wrap"><button data-action="export">JSONを書き出す</button><label class="btn" style="display:inline-flex;align-items:center">JSONを読み込む<input type="file" accept="application/json,.json" data-action="import" hidden></label>
+      <button data-action="edits-open">修正ファイルを読み込む</button>${hasEditsBackup() ? '<button data-action="edits-restore">修正ファイル適用前に戻す</button>' : ""}
       <button data-action="sample">サンプルデータを読み込む</button><button class="danger" data-action="fresh-start">まっさらにして初期データを入れる</button><button class="danger" data-action="reset">すべて削除</button></div></section>
       <section class="card"><h3>アプリのバージョン</h3><div class="row between wrap"><span class="small muted num">${esc(document.documentElement.dataset.version || "-")}</span><button data-action="check-update">更新を確認</button></div>
       <p class="tiny">表示が古いままのときは「更新を確認」を押してください。入力したデータは消えません。</p></section>`;
@@ -2057,6 +2126,24 @@
         toast("元に戻しました");
       });
     }),
+    "edits-open": () => editsSheet(),
+    "edits-restore": () => {
+      let saved;
+      try {
+        saved = JSON.parse(localStorage.getItem(EDITS_BACKUP_KEY));
+      } catch (e) {
+        saved = null;
+      }
+      if (!saved || !saved.state) return toast("バックアップがありません");
+      if (!confirm(`修正ファイルを適用する前（${saved.savedOn}）のデータに戻します。それ以降に入力したデータは消えます。よろしいですか？`)) return;
+      const before = JSON.stringify(state);
+      state = K.normalizeState(saved.state);
+      commit();
+      toast("適用前のデータに戻しました", () => {
+        state = K.normalizeState(JSON.parse(before));
+        commit();
+      });
+    },
     "cover-up": (b) => moveCover(b.dataset.id, -1),
     "cover-down": (b) => moveCover(b.dataset.id, 1),
     "living-up": (b) => moveLiving(b.dataset.id, -1),
@@ -2137,6 +2224,16 @@
     const t = e.target;
     if (t.dataset.action === "transfer-status") {
       undoable(`状態を「${K.TRANSFER_STATUS[t.value]}」にしました`, () => K.setTransferStatus(state, t.dataset.id, t.value));
+      return;
+    }
+    if (t.dataset.action === "edits-file" && t.files[0]) {
+      t.files[0].text().then((text) => {
+        const box = $("#editsText");
+        if (!box) return;
+        box.value = text;
+        const go = document.querySelector('#sheetBody [data-sheet-action="preview"]');
+        if (go) go.click();
+      });
       return;
     }
     if (t.dataset.action === "import" && t.files[0]) {

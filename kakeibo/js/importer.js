@@ -118,6 +118,10 @@
 
   const validDate = (d) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) && D.fmt(D.parse(d)) === d;
 
+  // 同じ日・同じ金額（口座が決まっていれば同じ口座）の記録
+  const findDuplicate = (state, date, signedAmount, accountId) =>
+    state.transactions.find((t) => t.date === date && t.amount === signedAmount && (!accountId || t.accountId === accountId));
+
   const findAccount = (state, name) => bestByName(state.accounts, name, (a) => a.name);
 
   const CATEGORY_KEYWORDS = [
@@ -231,7 +235,7 @@
           const cat = findCategory(state, kind, cols[5], row.label);
           row.categoryId = cat.id;
           const signed = kind === "income" ? row.amount : -row.amount;
-          const dup = state.transactions.find((t) => t.date === date && t.amount === signed && (!row.accountId || t.accountId === row.accountId));
+          const dup = findDuplicate(state, date, signed, row.accountId);
           if (dup) {
             warnings.push(`同じ日・同じ金額の記録（${dup.label || "無題"}）がすでにあります`);
             row.include = false;
@@ -324,7 +328,7 @@
     ].join("\n");
   };
 
-  const api = { TYPES, parseImport, applyImport, recordPayslip, buildPrompt, parseDate, splitLine };
+  const api = { TYPES, parseImport, applyImport, recordPayslip, buildPrompt, parseDate, splitLine, key, findAccount, findCategory, findDuplicate };
   if (isNode) module.exports = api;
   else root.KImport = api;
 })(typeof window !== "undefined" ? window : globalThis);
