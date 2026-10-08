@@ -1038,10 +1038,10 @@
   const editsPreviewHtml = (res) => {
     const c = res.count;
     const icon = { ok: "", skip: "スキップ", fail: "適用しない" };
-    return `<div class="small" style="margin-bottom:6px">追加 ${c.add}・変更 ${c.change}・削除 ${c.delete}${c.skip ? `・スキップ ${c.skip}` : ""}${c.fail ? `・<b style="color:var(--critical)">適用しない ${c.fail}</b>` : ""}</div>
+    return `<div class="small" style="margin-bottom:6px">${c.account ? `口座の追加 ${c.account}・` : ""}追加 ${c.add}・変更 ${c.change}・削除 ${c.delete}${c.skip ? `・スキップ ${c.skip}` : ""}${c.fail ? `・<b style="color:var(--critical)">適用しない ${c.fail}</b>` : ""}</div>
       <ul class="list">${res.items.map((it) => `<li style="display:block">
-        <div class="row" style="gap:8px;align-items:flex-start"><span class="badge ${it.status === "fail" ? "" : "accent"}" style="flex:none">${esc(it.status === "ok" ? { add: "追加", change: "変更", delete: "削除" }[it.action] : icon[it.status])}</span>
-        <div class="grow small" style="word-break:break-all;${it.status === "fail" ? "color:var(--critical)" : ""}">${esc(it.text.replace(/^(追加|変更|削除): /, ""))}</div></div>
+        <div class="row" style="gap:8px;align-items:flex-start"><span class="badge ${it.status === "fail" ? "" : "accent"}" style="flex:none">${esc(it.status === "ok" ? { add: "追加", change: "変更", delete: "削除", "add-account": "口座の追加" }[it.action] : icon[it.status])}</span>
+        <div class="grow small" style="word-break:break-all;${it.status === "fail" ? "color:var(--critical)" : ""}">${esc(it.text.replace(/^(追加|変更|削除|口座の追加): /, ""))}</div></div>
         ${it.notes.map((n) => `<div class="tiny" style="margin:2px 0 0 0;color:var(--critical)">⚠ ${esc(n)}</div>`).join("")}</li>`).join("")}</ul>`;
   };
 
@@ -1076,14 +1076,14 @@
           if (!confirm("適用前のバックアップを保存できませんでした（「元に戻す」は直後の数秒だけ使えます）。続けますか？")) return false;
         }
         let res;
-        undoable((r) => `修正を適用しました（追加${r.count.add}・変更${r.count.change}・削除${r.count.delete}${r.count.skip + r.count.fail ? `・対象外${r.count.skip + r.count.fail}` : ""}）`, () => {
+        undoable((r) => `修正を適用しました（${r.count.account ? `口座${r.count.account}・` : ""}追加${r.count.add}・変更${r.count.change}・削除${r.count.delete}${r.count.skip + r.count.fail ? `・対象外${r.count.skip + r.count.fail}` : ""}）`, () => {
           res = KEdits.apply(state, edits, { today: today() });
           return res;
         });
       },
     };
     openSheet("修正ファイルを読み込む", `<div style="display:grid;gap:12px">
-      <p class="small" style="margin:0">予定・収入の追加・変更・削除を、JSONの修正ファイルでまとめて反映します。いきなり適用はせず、先に差分を表示します。今のデータを置き換える「JSONを読み込む」とは別の機能です。</p>
+      <p class="small" style="margin:0">予定・収入の追加・変更・削除と口座の追加を、JSONの修正ファイルでまとめて反映します。いきなり適用はせず、先に差分を表示します。今のデータを置き換える「JSONを読み込む」とは別の機能です。</p>
       <label class="btn" style="display:inline-flex;align-items:center;justify-self:start">ファイルを選ぶ<input type="file" accept="application/json,.json,text/plain" data-action="edits-file" hidden></label>
       <label class="field">または、ここに貼り付け<textarea id="editsText" rows="7" placeholder='{"edits": [ {"action": "add", ...} ]}' style="font-family:monospace;font-size:12px"></textarea></label>
       <button type="submit" data-sheet-action="preview">差分を確認</button>

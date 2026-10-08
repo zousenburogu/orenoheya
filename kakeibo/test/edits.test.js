@@ -38,7 +38,7 @@ test("add：収入を予定として追加（口座・カテゴリは名前で�
   assert.equal(t.length, 1);
   assert.deepEqual([t[0].accountId, t[0].amount, t[0].status, t[0].categoryId], ["main", 4321, "planned", K.WINDFALL]);
   assert.equal(tx(s, "出費テスト")[0].amount, -900);
-  assert.deepEqual(r.count, { add: 2, change: 0, delete: 0, skip: 1, fail: 0 });
+  assert.deepEqual(r.count, { account: 0, add: 2, change: 0, delete: 0, skip: 1, fail: 0 });
   assert.match(r.items[1].text, /重複|同じ日/);
 });
 
@@ -148,7 +148,7 @@ test("preview：今のデータは変えず、apply と同じ結果になる。�
   const p = E.preview(s, edits, { today: TODAY });
   assert.equal(JSON.stringify(s), before);
   assert.deepEqual(p.items.map((i) => i.status), ["ok", "ok", "fail"]);
-  assert.deepEqual(p.count, { add: 1, change: 1, delete: 0, skip: 0, fail: 1 });
+  assert.deepEqual(p.count, { account: 0, add: 1, change: 1, delete: 0, skip: 0, fail: 1 });
   const a = E.apply(s, edits, { today: TODAY });
   assert.deepEqual(a.items.map((i) => i.text), p.items.map((i) => i.text));
   assert.equal(tx(s, "新規テスト")[0].date, "2026-10-16");
@@ -165,5 +165,84 @@ test("架空の修正ファイルのひな形どおりに適用できる", () =>
     { action: "delete", target: "入金テスト", date: "2026-10-05", amount: 3000 },
   ] });
   const r = E.apply(s, E.parseEdits(file), { today: TODAY });
-  assert.deepEqual(r.count, { add: 1, change: 4, delete: 1, skip: 0, fail: 0 });
+  assert.deepEqual(r.count, { account: 0, add: 1, change: 4, delete: 1, skip: 0, fail: 0 });
+});
+
+test("add-account：口座を追加（合計外・残高・メモ）。残高を入れると balanceSet、省略すると未記入のまま", () => {
+  const s = setup();
+  const r = E.apply(s, [
+    { action: "add-account", name: "テスト新口座", includeInTotal: false, balance: 1500, note: "テスト用メモ" },
+    { action: "add-account", name: "テスト未記入口座" },
+  ], { today: TODAY });
+  assert.deepEqual(r.items.map((i) => i.status), ["ok", "ok"]);
+  assert.deepEqual(r.count, { account: 2, add: 0, change: 0, delete: 0, skip: 0, fail: 0 });
+  assert.equal(r.applicable, 2);
+  const a = s.accounts.find((x) => x.name === "テスト新口座");
+  assert.deepEqual([a.includeInTotal, a.balance, a.balanceSet, a.note], [false, 1500, true, "テスト用メモ"]);
+  const b = s.accounts.find((x) => x.name === "テスト未記入口座");
+  assert.deepEqual([b.includeInTotal, b.balance, b.balanceSet, b.note], [true, 0, false, ""]);
+  assert.ok(r.items[1].notes.some((n) => /未記入/.test(n)));
+  assert.match(r.items[0].text, /口座の追加/);
+  assert.ok(a.id && a.id !== b.id);
+});
+
+test("add-account：同じ名前（表記ゆれ含む）はスキップ、ファイル内の重複も2つ目はスキップ", () => {
+  const s = setup();
+  const r = E.apply(s, [
+    { action: "add-account", name: "テスト給料口座" },
+    { action: "add-account", name: "テスト　別口座" }, // 全角スペースの違い
+    { action: "add-account", name: "ＴＥＳＴ口座" },
+    { action: "add-account", name: "test口座" },
+  ], { today: TODAY });
+  assert.deepEqual(r.items.map((i) => i.status), ["skip", "skip", "ok", "skip"]);
+  assert.match(r.items[0].text, /既にあるためスキップ/);
+  assert.equal(s.accounts.length, 3);
+  // 「別口座」の一部だけが同じ名前（別の口座）は作る
+  E.apply(s, [{ action: "add-account", name: "テスト別口座2" }], { today: TODAY });
+  assert.equal(s.accounts.length, 4);
+});
+
+test("add-account：口座名が空・残高や includeInTotal が不正なら適用しない", () => {
+  const s = setup();
+  const r = E.apply(s, [
+    { action: "add-account", name: "" },
+    { action: "add-account", name: "   " },
+    { action: "add-account" },
+    { action: "add-account", name: "不正残高口座", balance: "あいう" },
+    { action: "add-account", name: "不正残高口座2", balance: {} },
+    { action: "add-account", name: "不正フラグ口座", includeInTotal: "false" },
+    { action: "add-account", name: "文字列の残高口座", balance: "2,500円" },
+  ], { today: TODAY });
+  assert.deepEqual(r.items.map((i) => i.status), ["fail", "fail", "fail", "fail", "fail", "fail", "ok"]);
+  assert.match(r.items[0].text, /口座名/);
+  assert.match(r.items[3].text, /数字/);
+  assert.equal(s.accounts.length, 3);
+  assert.equal(s.accounts[2].balance, 2500);
+});
+
+test("add-account：他の行より先に作られ、同じファイルの予定がその口座を使える（結果は元の順）", () => {
+  const s = setup();
+  const edits = [
+    { action: "add", type: "expense", date: "2026-10-20", amount: 777, label: "新口座の支払い", account: "テスト新口座Z" },
+    { action: "add-account", name: "テスト新口座Z", includeInTotal: false, balance: 0 },
+  ];
+  const p = E.preview(s, edits, { today: TODAY });
+  assert.deepEqual(p.items.map((i) => [i.index, i.action, i.status]), [[1, "add", "ok"], [2, "add-account", "ok"]]);
+  assert.equal(s.accounts.length, 2); // プレビューは今のデータを変えない
+  const r = E.apply(s, edits, { today: TODAY });
+  const acc = s.accounts.find((x) => x.name === "テスト新口座Z");
+  assert.equal(tx(s, "新口座の支払い")[0].accountId, acc.id);
+  assert.deepEqual(r.count, { account: 1, add: 1, change: 0, delete: 0, skip: 0, fail: 0 });
+  // 口座がなければ（add-account がなければ）エラーになる
+  const r2 = E.apply(setup(), [Object.assign({}, edits[0], { account: "まったく別のQQQ" })], { today: TODAY });
+  assert.equal(r2.items[0].status, "fail");
+});
+
+test("add-account：追加した口座は予測にも使え、保存・読み込みしても残る", () => {
+  const s = setup();
+  E.apply(s, [{ action: "add-account", name: "テスト予測口座", balance: 4000 }], { today: TODAY });
+  const f = K.forecast(s, { today: TODAY, end: "2026-10-03" });
+  assert.equal(f.startBalance, 104000);
+  const again = K.normalizeState(JSON.parse(JSON.stringify(s)));
+  assert.equal(again.accounts.find((x) => x.name === "テスト予測口座").balance, 4000);
 });

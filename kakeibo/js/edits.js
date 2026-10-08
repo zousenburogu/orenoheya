@@ -2,7 +2,8 @@
    { "edits": [
        { "action": "add", "type": "income", "date": "2026-10-09", "amount": 1000, "label": "名前", "account": "口座名", "category": "カテゴリ名" },
        { "action": "change", "target": "名前", "from": { "date": "2026-10-05", "amount": 500 }, "to": { "date": "2026-10-09", "amount": 600 } },
-       { "action": "delete", "target": "名前", "date": "2026-10-05", "amount": 500 } ] }
+       { "action": "delete", "target": "名前", "date": "2026-10-05", "amount": 500 },
+       { "action": "add-account", "name": "口座名", "includeInTotal": false, "balance": 0, "note": "メモ" } ] }
    金額の符号は見ない（絶対値で照合し、変更では元の符号を保つ）。edits を上から順に適用する。 */
 (function (root) {
   "use strict";
@@ -67,11 +68,38 @@
   // state を直接書き換えながら edits を上から順に適用する。プレビューは複製に対して呼ぶ
   const run = (state, edits, { today } = {}) => {
     const t0 = today || D.today();
-    return edits.map((e, i) => {
+    // 口座の追加は他の行より先に（同じファイルの予定が新しい口座を使えるように）。結果は元の順で返す
+    const order = edits.map((e, i) => i).sort((a, b) => Number(!(edits[a] && edits[a].action === "add-account")) - Number(!(edits[b] && edits[b].action === "add-account")));
+    const items = [];
+    order.forEach((i) => (items[i] = runOne(state, edits[i], i, t0)));
+    return items;
+  };
+
+  const runOne = (state, e, i, t0) => {
+    {
       const item = { index: i + 1, action: e && e.action, status: "fail", text: "", notes: [] };
       const fail = (text) => Object.assign(item, { status: "fail", text });
       const ok = (text) => Object.assign(item, { status: "ok", text });
       if (!e || typeof e !== "object") return fail("形式が正しくない行です");
+
+      if (e.action === "add-account") {
+        const name = String(e.name ?? "").trim();
+        if (!name) return fail("口座を追加できません: name（口座名）がありません");
+        if (e.includeInTotal !== undefined && typeof e.includeInTotal !== "boolean") return fail(`口座「${name}」を追加できません: includeInTotal は true か false にしてください`);
+        const hasBalance = e.balance !== undefined && e.balance !== null && e.balance !== "";
+        let balance = 0;
+        if (hasBalance) {
+          balance = typeof e.balance === "number" ? e.balance : Number(String(e.balance).normalize("NFKC").replace(/[,¥円\s]/g, ""));
+          if (!Number.isFinite(balance) || (typeof e.balance === "string" && !/\d/.test(e.balance))) return fail(`口座「${name}」を追加できません: balance が数字ではありません（${e.balance}）`);
+          balance = Math.round(balance);
+        }
+        const same = state.accounts.find((a) => I.key(a.name) === I.key(name));
+        if (same) return Object.assign(item, { status: "skip", text: `既にあるためスキップ: 口座「${name}」（${same.name}）` });
+        const includeInTotal = e.includeInTotal !== false;
+        state.accounts.push({ id: K.uid("acc"), name, balance, includeInTotal, note: String(e.note ?? "").trim(), balanceSet: hasBalance });
+        if (!hasBalance) item.notes.push("残高は未記入のままです（あとで入力してください）");
+        return ok(`口座の追加: 「${name}」（${includeInTotal ? "合計に含める" : "合計に含めない"}・残高 ${hasBalance ? K.yen(balance) : "未記入"}）`);
+      }
 
       if (e.action === "add") {
         const kind = TYPES[String(e.type || "").trim().toLowerCase()];
@@ -142,8 +170,8 @@
         return ok(`変更: 「${h.label || "無題"}」${md(from.date)} ${K.yen(h.signed)} → ${md(toDate)} ${K.yen(sign * toAbs)}（${where}）`);
       }
 
-      return fail(`action は add・change・delete のどれかにしてください（${e.action ?? "未指定"}）`);
-    });
+      return fail(`action は add・change・delete・add-account のどれかにしてください（${e.action ?? "未指定"}）`);
+    }
   };
 
   const clone = (state) => K.normalizeState(JSON.parse(JSON.stringify(state)));
@@ -152,12 +180,12 @@
   const preview = (state, edits, opts) => summarize(run(clone(state), edits, opts));
 
   const summarize = (items) => {
-    const count = { add: 0, change: 0, delete: 0, skip: 0, fail: 0 };
+    const count = { account: 0, add: 0, change: 0, delete: 0, skip: 0, fail: 0 };
     items.forEach((it) => {
-      if (it.status === "ok") count[it.action]++;
+      if (it.status === "ok") count[it.action === "add-account" ? "account" : it.action]++;
       else count[it.status]++;
     });
-    return { items, count, applicable: count.add + count.change + count.delete };
+    return { items, count, applicable: count.account + count.add + count.change + count.delete };
   };
 
   const apply = (state, edits, opts) => summarize(run(state, edits, opts));
