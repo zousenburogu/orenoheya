@@ -537,6 +537,7 @@ label.field { position: relative; }
 .setup-bar.required .icon { color: #b07a00; }
 .field-error { display: block; font-size: 13px; color: var(--critical); margin-top: 4px; font-weight: 600; }
 .field-error[hidden] { display: none; }
+[hidden] { display: none !important; }
 select[aria-invalid="true"], input[aria-invalid="true"] { border-color: var(--critical); }
 .empty { text-align: center; color: var(--text-2); padding: 24px 8px; }
 .empty p { margin: 0 0 12px; }

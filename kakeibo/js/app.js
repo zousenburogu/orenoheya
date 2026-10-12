@@ -578,7 +578,13 @@
     return html;
   };
 
+  const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
   const describeDays = (r) => {
+    if (K.isWeekly(r)) {
+      const every = Number(r.weeks) > 1 ? `${r.weeks}週ごと` : "毎週";
+      const adj = r.adjust === "prev" ? "（休日は前営業日）" : r.adjust === "next" ? "（休日は翌営業日）" : "";
+      return `${every} ${WEEKDAY_NAMES[Number(r.weekday) || 0]}曜${adj}`;
+    }
     if (r.onPayday) return `毎月 給料日${r.startDate ? `（${r.startDate.slice(0, 7).replace("-", "/")}〜${r.endDate ? r.endDate.slice(0, 7).replace("-", "/") : ""}）` : ""}`;
     const days = r.days.map((d) => (Number(d) >= 31 ? "末日" : `${d}日`)).join("・");
     const every = Number(r.intervalMonths) > 1 ? `${r.intervalMonths}か月ごと` : "毎月";
@@ -866,7 +872,7 @@
       </tbody></table></div><p class="tiny" style="margin:6px 0 0">単位：円。期間＝給料日〜次の給料日の前日。別口座の予定は集計に含めません。</p></section>`;
     html += rows.map((r) => `<details class="card" style="margin-bottom:8px"><summary><b>${mmdd(r.start)}〜${mmdd(r.end)}</b>　貯金見込み <b class="num">${esc(yen(r.saving))}</b></summary>
       <ul class="list" style="margin-top:6px">${r.items.map((i) => perItemRow(i)).join("") || '<li class="small muted">予定はありません</li>'}
-      <li class="small"><span class="date"></span><div class="grow">生活費（平日${r.weekdays}日×${short(state.settings.weekdayCost)}＋休日${r.holidays}日×${short(state.settings.holidayCost)}）</div><span class="amt num">−${esc(yen(r.living))}</span></li>
+      <li class="small"><span class="date"></span><div class="grow">生活費の日割り（平日${r.weekdays}日×${short(state.settings.weekdayCost)}＋休日${r.holidays}日×${short(state.settings.holidayCost)}）</div><span class="amt num">−${esc(yen(r.livingDaily))}</span></li>
       <li class="small"><span class="date"></span><div class="grow">雑費</div><span class="amt num">−${esc(yen(r.misc))}</span></li></ul></details>`).join("");
     return html;
   };
@@ -920,7 +926,7 @@
     };
     const oneOffs = state.transactions.filter((x) => x.status === "planned" && !x.recurrenceId).sort((a, b) => (a.date < b.date ? -1 : 1));
     let html = `<section class="row wrap" style="gap:8px"><button class="primary" data-action="plan-new">＋ 予定を追加</button><button data-action="plan-initial">初期データを追加</button><button class="danger" data-action="fresh-start">まっさらにして初期データを入れる</button></section>`;
-    html += `<section class="card"><h3>毎月の予定</h3><ul class="list">${recs.map((r) => `<li><div class="grow"><div class="ellipsis">${esc(r.label)} <span class="badge">${esc(groupName(r))}</span></div>
+    html += `<section class="card"><h3>定期の予定（毎月・毎週）</h3><ul class="list">${recs.map((r) => `<li><div class="grow"><div class="ellipsis">${esc(r.label)} <span class="badge">${esc(groupName(r))}</span></div>
       <div class="meta">${r.tentative ? `<span class="badge warn">仮：${esc(r.tentative)}</span> ` : ""}${esc(describeDays(r))}${!r.onPayday && r.startDate ? `・${esc(r.startDate.slice(0, 7).replace("-", "/"))}〜${esc(r.endDate ? r.endDate.slice(0, 7).replace("-", "/") : "")}` : ""}・${esc(otherName(r.accountId))}</div></div>
       <span class="amt">${signed(r.amount)}</span><span class="actions"><button class="small ghost" data-action="rec-edit" data-id="${esc(r.id)}">編集</button></span></li>`).join("") || '<li class="small muted">なし</li>'}</ul>
       <p class="tiny" style="margin:6px 0 0">給料など月ごとに金額が違うものは「カレンダー」の予定一覧の「変更」でその月だけ上書きできます。</p></section>`;
@@ -942,7 +948,7 @@
       const level = r.diff >= 0 ? "good" : "critical";
       html += `<section class="tiles">
         <div class="card tile"><div class="label">1日あたり使える額</div><div class="value num">${esc(yen(r.perDay))}</div><div class="sub">${esc(yen(r.amount))} ÷ ${r.days}日</div></div>
-        <div class="card tile"><div class="label">見込み支出</div><div class="value num">${esc(yen(r.expected))}</div><div class="sub">生活費 ${esc(yen(r.living))}${r.includeMisc ? `＋雑費 ${esc(yen(r.misc))}` : "（雑費なし）"}</div></div>
+        <div class="card tile"><div class="label">見込み支出</div><div class="value num">${esc(yen(r.expected))}</div><div class="sub">生活費 ${esc(yen(r.living))}${r.bulk ? `（うちまとめ買い ${esc(yen(r.bulk))}）` : ""}${r.includeMisc ? `＋雑費 ${esc(yen(r.misc))}` : "（雑費なし）"}</div></div>
         <div class="card tile"><div class="label">${r.diff >= 0 ? "余る" : "足りない"}</div><div class="value num">${esc(yen(Math.abs(r.diff)))}</div></div>
       </section>
       <section>${alertBox(level, `<div>${mmdd(r.start)}〜${mmdd(r.end)}（平日${r.weekdays}日・休日${r.holidays}日）：生活費ルールだと ${esc(yen(r.expected))}。使える額 ${esc(yen(r.amount))} に対して <b class="num">${esc(yen(Math.abs(r.diff)))}</b> ${r.diff >= 0 ? "余ります" : "足りません"}</div>`)}</section>`;
@@ -1151,6 +1157,15 @@
       }).join("")}</ul></section>`;
   };
 
+  // まとめ買い：生活費カテゴリの定期ルール（毎週土曜 4,000円 など）。予定として出て、買ったら「済」で消し込む
+  const bulkRules = () => state.recurrences.filter((r) => !r.toAccountId && r.amount < 0 && ((K.categoryById(state, r.categoryId) || {}).group === "living"));
+  const viewBulk = () => {
+    const list = bulkRules();
+    return `<section class="card"><div class="row between"><h3 style="margin:0">まとめ買い（曜日と金額で払う生活費）</h3><button class="small primary" data-action="bulk-new">＋ 追加</button></div>
+      <p class="tiny" style="margin:4px 0 6px">週末の買い出しなど、決まった曜日にまとめて払う分です。予測ではその日にまとめて減ります。買ったら「これからの予定」で「済」（金額が違えば「変更」）にしてください。毎日少しずつ使う分だけ、下の「1日あたり」に入れます。</p>
+      <ul class="list">${list.map((r) => `<li><div class="grow"><div class="ellipsis">${esc(r.label)}</div><div class="meta">${esc(describeDays(r))}</div></div><span class="amt">${signed(r.amount)}</span><span class="actions"><button class="small ghost" data-action="rec-edit" data-id="${esc(r.id)}">編集</button></span></li>`).join("") || '<li class="small muted">なし（日割りだけで予測しています）</li>'}</ul></section>`;
+  };
+
   const viewLiving = () => {
     const s = state.settings;
     const t = today();
@@ -1176,6 +1191,7 @@
           ${err ? `<div class="field-error">${esc(err)}${sel.length > 1 && k < sel.length - 1 ? "。次の口座から払う見込みにします" : ""} <button class="link small" data-action="account-balance" data-id="${esc(a.id)}">残高を更新</button></div>` : ""}</li>`;
       }).join("")}</ul></section>
       ${viewCover()}
+      ${viewBulk()}
       <section class="card"><form class="stack" data-form="living">
       <div class="grid2"><label class="field">平日 1日あたり<input name="weekdayCost" inputmode="numeric" value="${esc(s.weekdayCost)}"></label>
       <label class="field">休日 1日あたり<input name="holidayCost" inputmode="numeric" value="${esc(s.holidayCost)}"></label></div>
@@ -1654,8 +1670,13 @@
     });
   };
 
-  const recSheet = (r) => {
-    const kind = r && r.toAccountId ? "transfer" : r && r.amount > 0 ? "income" : "expense";
+  // preset: 新規のときの初期値（まとめ買いの追加など）
+  const recSheet = (r, preset = {}) => {
+    const kind = r && r.toAccountId ? "transfer" : r && r.amount > 0 ? "income" : preset.kind || "expense";
+    const weekly = r ? K.isWeekly(r) : !!preset.weekly;
+    const weeksNow = r && K.isWeekly(r) ? Number(r.weeks) : 1;
+    const weekdayNow = r && K.isWeekly(r) ? Number(r.weekday) || 0 : preset.weekday !== undefined ? preset.weekday : 6;
+    const adjNow = r ? r.adjust || "none" : preset.adjust || "next";
     sheetActions = { delete: () => {
       if (!confirm(`「${r.label}」を削除しますか？`)) return false;
       state.recurrences = state.recurrences.filter((x) => x.id !== r.id);
@@ -1663,17 +1684,20 @@
     } };
     const daysText = r ? r.days.map((d) => (Number(d) >= 31 ? "末" : d)).join(", ") : "";
     openSheet(r ? "定期ルールを編集" : "定期ルールを追加", `<div style="display:grid;gap:14px">
-      <label class="field">名前<input name="label" value="${esc(r ? r.label : "")}" placeholder="例: 寮費、YouTube Premium、PayPay後払い、給料" required></label>
+      <label class="field">名前<input name="label" value="${esc(r ? r.label : preset.label || "")}" placeholder="例: 寮費、YouTube Premium、PayPay後払い、給料、週末のまとめ買い" required></label>
       <div class="grid2"><label class="field">種類<select name="kind"><option value="expense" ${kind === "expense" ? "selected" : ""}>支出</option><option value="income" ${kind === "income" ? "selected" : ""}>収入</option><option value="transfer" ${kind === "transfer" ? "selected" : ""}>口座間の振替</option></select></label>
       <label class="field">金額（1回あたり）<input name="amount" inputmode="numeric" value="${r ? Math.abs(r.amount) : ""}" required></label></div>
-      <label class="check"><input type="checkbox" name="onPayday" ${r && r.onPayday ? "checked" : ""}> 毎月の給料日と同じ日（電気代など給料のあとに払うもの。下の「日」は使いません）</label>
-      <div class="grid2"><label class="field">日（複数はカンマ区切り、末日は「末」）<input name="days" value="${esc(daysText)}" placeholder="例: 27 または 5, 20"></label>
+      <label class="field">くり返し<select name="schedule" id="recSchedule"><option value="monthly" ${weekly ? "" : "selected"}>月ごと（日にちで決める）</option><option value="weekly" ${weekly ? "selected" : ""}>週ごと（曜日で決める）</option></select></label>
+      <div class="grid2" data-sched="weekly"><label class="field">周期<select name="weeks">${[1, 2, 3, 4].map((w) => `<option value="${w}" ${weeksNow === w ? "selected" : ""}>${w === 1 ? "毎週" : `${w}週ごと`}</option>`).join("")}</select></label>
+      <label class="field">曜日<select name="weekday">${WEEKDAY_NAMES.map((n, i) => `<option value="${i}" ${weekdayNow === i ? "selected" : ""}>${n}曜</option>`).join("")}</select></label></div>
+      <label class="check" data-sched="monthly"><input type="checkbox" name="onPayday" ${r && r.onPayday ? "checked" : ""}> 毎月の給料日と同じ日（電気代など給料のあとに払うもの。下の「日」は使いません）</label>
+      <div class="grid2" data-sched="monthly"><label class="field">日（複数はカンマ区切り、末日は「末」）<input name="days" value="${esc(daysText)}" placeholder="例: 27 または 5, 20"></label>
       <label class="field">周期<select name="intervalMonths">${[1, 2, 3, 6, 12].map((m) => `<option value="${m}" ${Number(r ? r.intervalMonths || 1 : 1) === m ? "selected" : ""}>${m === 1 ? "毎月" : `${m}か月ごと`}</option>`).join("")}</select></label></div>
-      <label class="field">休日の場合<select name="adjust"><option value="none" ${r && r.adjust === "none" ? "selected" : ""}>そのまま</option><option value="next" ${!r || r.adjust === "next" ? "selected" : ""}>翌営業日（引き落としに多い）</option><option value="prev" ${r && r.adjust === "prev" ? "selected" : ""}>前営業日（給料に多い）</option></select></label>
-      <div class="grid2"><label class="field">口座（振替は出金元）<select name="accountId">${accountOptions(r ? r.accountId : state.settings.salaryAccountId)}</select></label>
-      <label class="field">カテゴリ（振替は不要）<select name="categoryId">${categoryOptions(null, r ? r.categoryId : "cat_bnpl")}</select></label></div>
+      <label class="field">休日の場合<select name="adjust"><option value="none" ${adjNow === "none" ? "selected" : ""}>そのまま</option><option value="next" ${adjNow === "next" ? "selected" : ""}>翌営業日（引き落としに多い）</option><option value="prev" ${adjNow === "prev" ? "selected" : ""}>前営業日（給料に多い）</option></select></label>
+      <div class="grid2"><label class="field">口座（振替は出金元）<select name="accountId">${accountOptions(r ? r.accountId : preset.accountId || state.settings.salaryAccountId)}</select></label>
+      <label class="field">カテゴリ（振替は不要）<select name="categoryId">${categoryOptions(null, r ? r.categoryId : preset.categoryId || "cat_bnpl")}</select></label></div>
       <label class="field">振替の入金先（種類が「口座間の振替」のとき）<select name="toAccountId">${accountOptions(r ? r.toAccountId : state.settings.livingAccountId, { includeEmpty: true })}</select></label>
-      <div class="grid2"><label class="field">開始日（隔月の起点）<input type="date" name="startDate" value="${esc(r ? r.startDate || "" : today())}"></label>
+      <div class="grid2"><label class="field">開始日（隔月・隔週の起点）<input type="date" name="startDate" value="${esc(r ? r.startDate || "" : today())}"></label>
       <label class="field">終了日（任意）<input type="date" name="endDate" value="${esc(r ? r.endDate || "" : "")}"></label></div>
       <p class="tiny" style="margin:0">後払いのように毎回金額が違うものは、ホームの「これからの予定」の「変更」でその回だけ金額を上書きできます。</p>
       ${foot(!!r)}</div>`, (fd) => {
@@ -1683,8 +1707,9 @@
         .filter(Boolean)
         .map((d) => (/^末/.test(d) ? 31 : Number(d.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)))))
         .filter((d) => d >= 1 && d <= 31);
-      const onPayday = fd.get("onPayday") === "on";
-      if (Number.isNaN(amt) || (!days.length && !onPayday)) return toast("金額と日付を確認してください"), false;
+      const isWeeklyRule = fd.get("schedule") === "weekly";
+      const onPayday = !isWeeklyRule && fd.get("onPayday") === "on";
+      if (Number.isNaN(amt) || (!isWeeklyRule && !days.length && !onPayday)) return toast("金額と日付を確認してください"), false;
       const isTransfer = fd.get("kind") === "transfer";
       if (isTransfer && (!fd.get("toAccountId") || fd.get("toAccountId") === fd.get("accountId"))) return toast("振替の入金先を出金元と別の口座にしてください"), false;
       const data = {
@@ -1703,9 +1728,20 @@
       if (r) {
         Object.assign(r, data);
         delete r.tentative;
-      } else state.recurrences.push(Object.assign({ id: K.uid("rec"), doneDates: [] }, data));
+        delete r.weeks;
+        delete r.weekday;
+      }
+      if (isWeeklyRule) Object.assign(data, { weeks: Number(fd.get("weeks")) || 1, weekday: Number(fd.get("weekday")) || 0 });
+      if (r) Object.assign(r, data);
+      else state.recurrences.push(Object.assign({ id: K.uid("rec"), doneDates: [] }, data));
       commit();
     });
+    const sync = () => {
+      const w = $("#recSchedule") && $("#recSchedule").value;
+      document.querySelectorAll("#sheetBody [data-sched]").forEach((el) => (el.hidden = el.dataset.sched !== w));
+    };
+    sheetOnInput = sync;
+    sync();
   };
 
   const occurrenceSheet = (r, original) => {
@@ -1993,6 +2029,7 @@
     "occ-done": (b) => undoable("残高に反映しました", () => K.completeOccurrence(state, b.dataset.id, b.dataset.date)),
     "occ-edit": (b) => occurrenceSheet(state.recurrences.find((x) => x.id === b.dataset.id), b.dataset.date),
     "rec-new": () => recSheet(null),
+    "bulk-new": () => recSheet(null, { weekly: true, weekday: 6, label: "まとめ買い", categoryId: "cat_living", adjust: "none", accountId: K.livingAccounts(state)[0] || state.settings.salaryAccountId }),
     "rec-edit": (b) => recSheet(state.recurrences.find((x) => x.id === b.dataset.id)),
     "slip-new": () => slipSheet(null),
     "slip-edit": (b) => slipSheet(state.payslips.find((x) => x.id === b.dataset.id)),
