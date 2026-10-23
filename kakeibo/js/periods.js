@@ -49,7 +49,8 @@
 
   /**
    * 期間内の予定（定期ルールの各回・単発の予定・記録済みの実績）。別口座（合計に含めない口座）の分は other: true
-   * 生活費・雑費のカテゴリの取引はルール計算と二重になるので含めない。口座間の振替・残高調整も含めない
+   * 生活費・雑費のカテゴリの取引はルール計算と二重になるので含めない（まとめ買いなど定期ルールの回として記録した分は含める）。
+   * 口座間の振替・残高調整も含めない
    */
   const periodItems = (state, start, end) => {
     const items = [];
@@ -68,7 +69,7 @@
     state.transactions.forEach((t) => {
       if (t.adjustment || t.date < start || t.date > end) return;
       const group = groupOf(state, t.categoryId, t.amount);
-      if (group === "living" || group === "misc") return;
+      if ((group === "living" || group === "misc") && !t.recurrenceId) return;
       items.push({ date: t.date, label: t.label || (K.categoryById(state, t.categoryId) || {}).name || "", amount: t.amount, group, other: otherAcc(t.accountId), accountId: t.accountId, source: t.status === "planned" ? "planned" : "actual", refId: t.id });
     });
     return items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -102,12 +103,15 @@
     const items = periodItems(state, start, end);
     const sum = (g) => items.filter((i) => !i.other && i.group === g).reduce((a, i) => a + Math.abs(i.amount), 0);
     const income = sum("income");
-    const living = livingCost(state, counts);
+    // 生活費 ＝ 日割り（平日・休日の単価）＋ まとめ買い（生活費カテゴリの定期ルール）
+    const livingDaily = livingCost(state, counts);
+    const bulk = sum("living");
+    const living = livingDaily + bulk;
     const misc = miscFor(state, start, end);
     const fixed = sum("fixed");
     const repay = sum("repay");
     const total = living + misc + fixed + repay;
-    return { start, end, ...counts, income, living, misc, fixed, repay, total, saving: income - total, items };
+    return { start, end, ...counts, income, livingDaily, bulk, living, misc, fixed, repay, total, saving: income - total, items };
   };
 
   // 給料期間ごとの集計（累計つき）
@@ -124,11 +128,12 @@
   const budgetMode = (state, { start, end, amount, includeMisc }) => {
     if (!start || !end || end < start) return null;
     const counts = countDays(state, start, end);
-    const living = livingCost(state, counts);
+    const bulk = periodItems(state, start, end).filter((i) => !i.other && i.group === "living").reduce((a, i) => a + Math.abs(i.amount), 0);
+    const living = livingCost(state, counts) + bulk;
     const misc = miscFor(state, start, end);
     const expected = living + (includeMisc ? misc : 0);
     const avail = Math.round(Number(amount) || 0);
-    return { start, end, ...counts, amount: avail, perDay: counts.days ? Math.floor(avail / counts.days) : 0, living, misc, includeMisc: !!includeMisc, expected, diff: avail - expected };
+    return { start, end, ...counts, amount: avail, perDay: counts.days ? Math.floor(avail / counts.days) : 0, living, bulk, misc, includeMisc: !!includeMisc, expected, diff: avail - expected };
   };
 
   // カレンダー用：月の予定（別口座も含む）と給料日
@@ -181,8 +186,11 @@
     const extraHolidays = data.extraHolidays || [];
     if (!Array.isArray(recurrences) || !Array.isArray(oneOffs) || !Array.isArray(extraHolidays)) throw bad();
     if (!recurrences.length && !oneOffs.length) throw bad();
+    // 毎月のルールは days（日の配列）、週ごとのルールは weeks（何週ごと）と weekday（0=日〜6=土）で指定する
+    const weeklyOk = (r) => Number.isInteger(r.weeks) && r.weeks >= 1 && Number.isInteger(r.weekday) && r.weekday >= 0 && r.weekday <= 6;
     recurrences.forEach((r) => {
-      if (!r || !r.label || !Number.isFinite(r.amount) || !Array.isArray(r.days) || !isYmd(r.startDate)) throw bad();
+      if (!r || !r.label || !Number.isFinite(r.amount) || !isYmd(r.startDate)) throw bad();
+      if (r.weeks !== undefined ? !weeklyOk(r) : !Array.isArray(r.days)) throw bad();
     });
     oneOffs.forEach((o) => {
       if (!o || !o.label || !Number.isFinite(o.amount) || !isYmd(o.date)) throw bad();
@@ -217,15 +225,20 @@
     if (INITIAL.budget) state.settings.budget = Object.assign({}, INITIAL.budget);
 
     INITIAL.recurrences.forEach((src) => {
-      const dup = state.recurrences.find((r) => key(r.label) === key(src.label) && r.amount === src.amount && !!r.onPayday === !!src.onPayday);
+      const amount = src.toOther ? -Math.abs(src.amount) : src.amount;
+      const dup = state.recurrences.find((r) => key(r.label) === key(src.label) && r.amount === amount && !!r.onPayday === !!src.onPayday && (Number(r.weeks) || 0) === (Number(src.weeks) || 0));
       if (dup) {
         added.skipped.push(src.label);
         return;
       }
+      const weekly = src.weeks !== undefined;
+      // toOther: true は「メイン口座 → 別口座」の定期の振替（毎週の貯金など）。金額の符号は問わない
       const r = {
-        id: K.uid("rec"), label: src.label, amount: src.amount, days: src.days, onPayday: !!src.onPayday,
-        intervalMonths: 1, adjust: "none", accountId: mainId, categoryId: src.categoryId,
+        id: K.uid("rec"), label: src.label, amount, days: weekly ? [1] : src.days, onPayday: !weekly && !!src.onPayday,
+        intervalMonths: 1, adjust: "none", accountId: mainId, categoryId: src.toOther ? "" : src.categoryId,
         startDate: src.startDate, endDate: src.endDate || "", doneDates: [],
+        ...(weekly ? { weeks: src.weeks, weekday: src.weekday } : {}),
+        ...(src.toOther ? { toAccountId: other.id } : {}),
         ...(src.tentative ? { tentative: src.tentative } : {}),
       };
       state.recurrences.push(r);

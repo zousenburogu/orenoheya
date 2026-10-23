@@ -85,6 +85,7 @@
     s.recurrences.forEach((r) => {
       if (!Array.isArray(r.doneDates)) r.doneDates = [];
       if (!Array.isArray(r.days)) r.days = [Number(r.days) || 1];
+      if (r.weeks !== undefined && !(Number(r.weeks) > 0)) delete r.weeks;
     });
     return s;
   };
@@ -408,8 +409,28 @@
     return D.adjustBusinessDay(D.ymd(y, m, Math.min(day, D.daysInMonth(y, m))), settings.paydayAdjust || "prev");
   };
 
+  // 週ごとのルール（weeks: 何週ごと、weekday: 曜日 0=日〜6=土）。起点は開始日以降で最初のその曜日
+  const isWeekly = (r) => Number(r && r.weeks) > 0;
+  const expandWeekly = (r, start, end) => {
+    const out = [];
+    const step = Math.max(1, Math.round(Number(r.weeks))) * 7;
+    const wd = ((Math.round(Number(r.weekday)) % 7) + 7) % 7;
+    const base = r.startDate || start;
+    let d = D.addDays(base, (wd - D.dow(base) + 7) % 7);
+    // 範囲より前は回数をまとめて飛ばす（営業日調整で前にずれる分の余裕を1回分残す）
+    const behind = D.diffDays(d, start);
+    if (behind > step) d = D.addDays(d, (Math.floor(behind / step) - 1) * step);
+    for (; d <= D.addDays(end, 7); d = D.addDays(d, step)) {
+      if (r.endDate && d > r.endDate) break;
+      const date = D.adjustBusinessDay(d, r.adjust);
+      if (date >= start && date <= end) out.push({ date, original: d });
+    }
+    return out;
+  };
+
   // settings は「毎月の給料日」ルール（onPayday）の日付計算に使う
   const expandRecurrence = (r, start, end, settings) => {
+    if (isWeekly(r)) return expandWeekly(r, start, end);
     const out = [];
     const interval = Math.max(1, Number(r.intervalMonths) || 1);
     const anchor = r.startDate || "2000-01-01";
@@ -521,9 +542,10 @@
       const extra = st.extraHolidays || [];
       const misc = Math.round(Number(st.miscMonthly) || 0);
       // 実績で使った分は見込みから差し引く（実績と見込みの二重計上を防ぐ）
+      // 定期ルール（まとめ買いなど）の回として記録した分は、そのルールの予定と相殺されるので日割りからは引かない
       const spent = (categoryId, from, to) =>
         state.transactions
-          .filter((t) => t.status === "actual" && t.categoryId === categoryId && t.amount < 0 && !t.adjustment && t.date >= from && t.date <= to)
+          .filter((t) => t.status === "actual" && t.categoryId === categoryId && t.amount < 0 && !t.adjustment && !t.recurrenceId && t.date >= from && t.date <= to)
           .reduce((sum, t) => sum - t.amount, 0);
       const livingToday = spent("cat_living", today, today);
       // 今月の雑費は「月の枠 − 今月の実績」を残りの日数で割る。来月以降は月の枠をそのまま日割り
@@ -1019,7 +1041,7 @@
     canUnconfirm, unconfirmTransaction,
     overrideOccurrence, skipOccurrence,
     addTransfer, removeTransfer, setTransferStatus, completeTransfer, inFlightTotal,
-    expandRecurrence, nextPayday, paydayOfMonth, collectEvents, forecast, hasInFlightInScope, resolveScope,
+    expandRecurrence, isWeekly, nextPayday, paydayOfMonth, collectEvents, forecast, hasInFlightInScope, resolveScope,
     sortedPayslips, overtimeRate, estimateNextPay,
     ageOn, birthdayAtAge, goalTargetDate, goalPlan, earningsCalendar, incomeCalendar, incomeYearToDate, isWorkday, categorySummary, windfallOfYear, alerts,
   };
