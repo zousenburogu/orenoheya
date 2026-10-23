@@ -2161,14 +2161,27 @@
       toast("予定として保存しました");
     },
     export: () => {
-      state.settings.lastExportOn = today();
-      const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+      const name = `kakeibo-${today()}.json`;
+      const json = JSON.stringify(Object.assign({}, state, { settings: Object.assign({}, state.settings, { lastExportOn: today() }) }), null, 2);
+      const done = () => {
+        state.settings.lastExportOn = today();
+        commit();
+      };
+      // iPhone は Blob の直接ダウンロードで「WebKitBlobResource エラー」になることがあるので、共有シート（「ファイルに保存」）を先に使う
+      const file = typeof File === "function" ? new File([json], name, { type: "application/json" }) : null;
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: name }).then(done, (err) => {
+          if (err && err.name === "AbortError") return;
+          toast("書き出せませんでした。もう一度お試しください");
+        });
+        return;
+      }
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `kakeibo-${today()}.json`;
+      a.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+      a.download = name;
       a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-      commit();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      done();
     },
     sample: () => {
       if (state.accounts.length && !confirm("今のデータをサンプルデータで置き換えますか？")) return;
