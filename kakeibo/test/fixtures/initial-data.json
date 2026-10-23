@@ -1,0 +1,24 @@
+{
+  "settings": { "weekdayCost": 1000, "holidayCost": 3000, "miscMonthly": 10000, "payday": 25, "paydayAdjust": "prev" },
+  "extraHolidays": ["2026-12-29", "2026-12-30", "2026-12-31", "2027-01-01", "2027-01-02", "2027-01-03"],
+  "budget": { "start": "2026-10-01", "end": "2026-10-22", "amount": 30000, "includeMisc": false },
+  "recurrences": [
+    { "label": "スマホ代", "amount": -3000, "days": [15], "categoryId": "cat_fixed", "startDate": "2026-11-01" },
+    { "label": "電気代", "amount": -10000, "onPayday": true, "days": [25], "categoryId": "cat_fixed", "startDate": "2026-10-01", "tentative": "概算" },
+    { "label": "動画サブスク", "amount": -1000, "days": [25], "categoryId": "cat_fixed", "startDate": "2026-10-01" },
+    { "label": "ローンA", "amount": -5000, "days": [7], "categoryId": "cat_repay", "startDate": "2026-11-01", "endDate": "2027-01-31" },
+    { "label": "給料", "amount": 200000, "onPayday": true, "days": [25], "categoryId": "cat_salary", "startDate": "2026-10-01", "overrides": { "2026-11": 210000, "2026-12": 220000 } }
+  ],
+  "oneOffs": [
+    { "date": "2026-10-05", "label": "入金", "amount": 20000, "categoryId": "cat_windfall" },
+    { "date": "2026-10-05", "label": "後払いA", "amount": -10000, "categoryId": "cat_repay", "other": true },
+    { "date": "2026-10-07", "label": "ローンA", "amount": -5000, "categoryId": "cat_repay", "other": true },
+    { "date": "2026-10-15", "label": "スマホ代", "amount": -3000, "categoryId": "cat_fixed", "other": true },
+    { "date": "2026-10-27", "label": "後払いB", "amount": -2000, "categoryId": "cat_repay" },
+    { "date": "2026-11-05", "label": "後払いA", "amount": -8000, "categoryId": "cat_repay" },
+    { "date": "2026-11-27", "label": "後払いB（リボ）", "amount": -5000, "categoryId": "cat_repay", "tentative": "概算" },
+    { "date": "2026-12-05", "label": "後払いA", "amount": -9000, "categoryId": "cat_repay", "tentative": "概算" },
+    { "date": "2026-12-27", "label": "後払いB（残りを完済）", "amount": -10000, "categoryId": "cat_repay", "tentative": "概算" },
+    { "date": "2026-12-04", "label": "ボーナス", "amount": 300000, "categoryId": "cat_bonus", "tentative": "日付は仮" }
+  ]
+}
