@@ -1,7 +1,8 @@
 /* 修正ファイル（JSON）による予定・収入の一括「追加・変更・削除」。DOM 非依存。
    { "edits": [
        { "action": "add", "type": "income", "date": "2026-10-09", "amount": 1000, "label": "名前", "account": "口座名", "category": "カテゴリ名" },
-       { "action": "change", "target": "名前", "from": { "date": "2026-10-05", "amount": 500 }, "to": { "date": "2026-10-09", "amount": 600 } },
+       { "action": "add", "type": "expense", "date": "2026-10-09", "amount": 300, "label": "名前", "reflected": true },  // 残高に反映済みの実績（残高は動かさない）
+       { "action": "change", "target": "名前", "from": { "date": "2026-10-05", "amount": 500 }, "to": { "date": "2026-10-09", "amount": 600, "label": "新しい名前", "category": "カテゴリ名" } },
        { "action": "delete", "target": "名前", "date": "2026-10-05", "amount": 500 },
        { "action": "add-account", "name": "口座名", "includeInTotal": false, "balance": 0, "note": "メモ" } ] }
    金額の符号は見ない（絶対値で照合し、変更では元の符号を保つ）。edits を上から順に適用する。 */
@@ -109,6 +110,7 @@
         if (!isDate(e.date)) return fail(`追加できません: 日付が正しくありません（${e.date ?? "未指定"}）`);
         if (!(abs > 0)) return fail("追加できません: 金額が正しくありません");
         if (!label) return fail("追加できません: label（名前）がありません");
+        if (e.reflected !== undefined && typeof e.reflected !== "boolean") return fail(`追加できません: reflected は true か false にしてください（${e.reflected}）`);
         let acc;
         if (e.account) {
           acc = I.findAccount(state, e.account);
@@ -126,8 +128,11 @@
         const dup = I.findDuplicate(state, e.date, signed, acc.id);
         if (dup) return Object.assign(item, { status: "skip", text: `スキップ（同じ日・同じ金額の「${dup.label || "無題"}」があります）: ${head}` });
         const planned = e.date > t0;
-        K.addTransaction(state, { accountId: acc.id, date: e.date, amount: signed, categoryId: cat.id, label, status: planned ? "planned" : "actual" });
-        if (!planned) item.notes.push("過去の日付なので実績として記録し、口座の残高も動きます");
+        const reflected = !planned && e.reflected === true;
+        K.addTransaction(state, Object.assign({ accountId: acc.id, date: e.date, amount: signed, categoryId: cat.id, label, status: planned ? "planned" : "actual" }, reflected ? { balanceAlreadyReflected: true } : {}));
+        if (reflected) item.notes.push("残高に反映済みの実績として記録します（口座の残高は動きません）");
+        else if (!planned) item.notes.push("過去の日付なので実績として記録し、口座の残高も動きます");
+        if (planned && e.reflected === true) item.notes.push("未来の日付なので予定として記録します（reflected は使いません）");
         return ok(`追加: ${head}`);
       }
 
@@ -140,13 +145,19 @@
         if (!isDate(from.date) || !(abs > 0)) return fail(`${verb}できません: 「${e.target}」の${del ? "" : "from の"}日付・金額が正しくありません`);
         let toDate = from.date;
         let toAbs = abs;
+        let toLabel;
+        let toCategory;
         if (!del) {
           const to = e.to || {};
           if (to.date !== undefined && !isDate(to.date)) return fail(`変更できません: 「${e.target}」の to の日付が正しくありません`);
           if (to.amount !== undefined && !(absAmount(to.amount) > 0)) return fail(`変更できません: 「${e.target}」の to の金額が正しくありません`);
-          if (to.date === undefined && to.amount === undefined) return fail(`変更できません: 「${e.target}」の to に日付か金額が必要です`);
+          if (to.label !== undefined && !String(to.label).trim()) return fail(`変更できません: 「${e.target}」の to の名前が空です`);
+          if (to.category !== undefined && !String(to.category).trim()) return fail(`変更できません: 「${e.target}」の to のカテゴリが空です`);
+          if (to.date === undefined && to.amount === undefined && to.label === undefined && to.category === undefined) return fail(`変更できません: 「${e.target}」の to に日付・金額・名前・カテゴリのどれかが必要です`);
           toDate = to.date || from.date;
           toAbs = to.amount !== undefined ? absAmount(to.amount) : abs;
+          if (to.label !== undefined) toLabel = String(to.label).trim();
+          if (to.category !== undefined) toCategory = String(to.category).trim();
         }
         const label = `「${e.target}」${md(from.date)} ${K.yen(abs)}`;
         const hits = findTarget(state, e.target, from.date, abs);
@@ -154,8 +165,10 @@
         if (hits.length > 1) return fail(`複数見つかりました（適用しません）: ${label} → ${hits.map((h) => `「${h.label || "無題"}」`).join("、")}`);
         const h = hits[0];
         const sign = h.signed < 0 ? -1 : 1;
-        const where = h.kind === "rec" ? "定期の1回分" : h.t.status === "actual" ? "実績" : "予定";
-        if (h.kind === "tx" && h.t.status === "actual") item.notes.push("実績なので口座の残高も動きます");
+        const where = h.kind === "rec" ? "定期の1回分" : h.t.status === "actual" ? (h.t.adjustment ? "残高調整" : "実績") : "予定";
+        if (!del && h.kind === "rec" && (toLabel !== undefined || toCategory !== undefined)) return fail(`変更できません: 定期ルールの1回分は名前・カテゴリを変えられません（ルールの画面で変えてください）: ${label}`);
+        const moves = h.kind === "tx" && h.t.status === "actual" && (del || toAbs !== abs);
+        if (moves) item.notes.push(h.t.balanceAlreadyReflected ? "残高に反映済みの記録なので、口座の残高は動きません" : "実績なので口座の残高も動きます");
         if (del) {
           if (h.kind === "tx") {
             const { recurrenceId, occurrenceDate } = h.t;
@@ -164,10 +177,29 @@
           } else K.skipOccurrence(state, h.r.id, h.original);
           return ok(`削除: ${describeHit(h, from.date)}（${where}）`);
         }
-        if (toDate === from.date && toAbs === abs) return Object.assign(item, { status: "skip", text: `スキップ（変更がありません）: ${describeHit(h, from.date)}` });
-        if (h.kind === "tx") K.updateTransaction(state, h.t.id, { date: toDate, amount: sign * toAbs });
-        else K.overrideOccurrence(state, h.r.id, h.original, { date: toDate, amount: sign * toAbs });
-        return ok(`変更: 「${h.label || "無題"}」${md(from.date)} ${K.yen(h.signed)} → ${md(toDate)} ${K.yen(sign * toAbs)}（${where}）`);
+        let catId;
+        if (toCategory !== undefined) {
+          const cat = I.findCategory(state, sign < 0 ? "expense" : "income", toCategory, toLabel || h.label);
+          if (cat.guessed) item.notes.push(`カテゴリ「${toCategory}」が見つからないため「${(K.categoryById(state, cat.id) || {}).name}」にしました`);
+          catId = cat.id;
+        }
+        const sameLabel = toLabel === undefined || toLabel === h.t.label;
+        const sameCat = catId === undefined || catId === h.t.categoryId;
+        if (toDate === from.date && toAbs === abs && sameLabel && sameCat) return Object.assign(item, { status: "skip", text: `スキップ（変更がありません）: ${describeHit(h, from.date)}` });
+        if (h.kind === "tx") {
+          const patch = { date: toDate, amount: sign * toAbs };
+          if (!sameLabel) patch.label = toLabel;
+          if (!sameCat) patch.categoryId = catId;
+          const wasAdjustment = !!h.t.adjustment;
+          K.updateTransaction(state, h.t.id, patch);
+          // 名前かカテゴリを付けた残高調整は、ふつうの記録として集計に入れる（残高反映済みのままなので残高は動かない）
+          if (wasAdjustment && (!sameLabel || !sameCat)) {
+            delete h.t.adjustment;
+            item.notes.push("残高調整をふつうの記録にしました（集計に入ります。口座の残高は動きません）");
+          }
+        } else K.overrideOccurrence(state, h.r.id, h.original, { date: toDate, amount: sign * toAbs });
+        const extra = [!sameLabel ? `名前「${toLabel}」` : "", !sameCat ? `カテゴリ「${(K.categoryById(state, catId) || {}).name || catId}」` : ""].filter(Boolean).join("・");
+        return ok(`変更: 「${h.label || "無題"}」${md(from.date)} ${K.yen(h.signed)} → ${md(toDate)} ${K.yen(sign * toAbs)}${extra ? `・${extra}` : ""}（${where}）`);
       }
 
       return fail(`action は add・change・delete・add-account のどれかにしてください（${e.action ?? "未指定"}）`);

@@ -246,3 +246,64 @@ test("add-account：追加した口座は予測にも使え、保存・読み込
   const again = K.normalizeState(JSON.parse(JSON.stringify(s)));
   assert.equal(again.accounts.find((x) => x.name === "テスト予測口座").balance, 4000);
 });
+
+test("add：reflected:true は残高に反映済みの実績として記録し、残高を動かさない（未来は予定、不正な値はエラー）", () => {
+  const s = setup();
+  const r = E.apply(s, [
+    { action: "add", type: "expense", date: "2026-09-30", amount: 2983, label: "チャージテスト", account: "テスト給料口座", category: "生活費", reflected: true },
+    { action: "add", type: "expense", date: "2026-10-20", amount: 400, label: "未来の反映済み", reflected: true },
+    { action: "add", type: "expense", date: "2026-09-30", amount: 500, label: "不正フラグ", reflected: "yes" },
+  ], { today: TODAY });
+  assert.deepEqual(r.items.map((i) => i.status), ["ok", "ok", "fail"]);
+  const t = tx(s, "チャージテスト")[0];
+  assert.deepEqual([t.status, t.amount, t.balanceAlreadyReflected, t.categoryId], ["actual", -2983, true, "cat_living"]);
+  assert.equal(s.accounts[0].balance, 100000);
+  assert.ok(r.items[0].notes.some((n) => /反映済み/.test(n)));
+  assert.equal(tx(s, "未来の反映済み")[0].status, "planned");
+  assert.ok(r.items[1].notes.some((n) => /予定として/.test(n)));
+  // 反映済みの実績を消しても残高は動かない
+  const r2 = E.apply(s, [{ action: "delete", target: "チャージテスト", date: "2026-09-30", amount: 2983 }], { today: TODAY });
+  assert.equal(r2.items[0].status, "ok");
+  assert.equal(s.accounts[0].balance, 100000);
+  assert.ok(r2.items[0].notes.some((n) => /動きません/.test(n)));
+});
+
+test("change：to の名前・カテゴリだけでも変えられ、同じ内容はスキップ、定期の1回分は名前を変えない", () => {
+  const s = setup();
+  const r = E.apply(s, [
+    { action: "change", target: "ペイテスト", from: { date: "2026-10-27", amount: 700 }, to: { label: "ペイ後払い", category: "返済" } },
+    { action: "change", target: "ペイ後払い", from: { date: "2026-10-27", amount: 700 }, to: { label: "ペイ後払い" } },
+    { action: "change", target: "電気代テスト", from: { date: "2026-10-25", amount: 8000 }, to: { label: "電気" } },
+    { action: "change", target: "入金テスト", from: { date: "2026-10-05", amount: 3000 }, to: {} },
+    { action: "change", target: "入金テスト", from: { date: "2026-10-05", amount: 3000 }, to: { label: "  " } },
+  ], { today: TODAY });
+  assert.deepEqual(r.items.map((i) => i.status), ["ok", "skip", "fail", "fail", "fail"]);
+  const t = tx(s, "ペイ後払い")[0];
+  assert.deepEqual([t.date, t.amount, t.categoryId, t.status], ["2026-10-27", -700, "cat_repay", "planned"]);
+  assert.match(r.items[0].text, /名前「ペイ後払い」.*カテゴリ「返済」/);
+  assert.match(r.items[2].text, /定期ルール/);
+  assert.equal(s.recurrences.find((x) => x.id === "r_elec").label, "電気代テスト");
+});
+
+test("change：残高調整に名前・カテゴリを付けるとふつうの記録になり、金額を変えても残高は動かない", () => {
+  const s = setup();
+  K.addTransaction(s, { accountId: "main", date: "2026-09-30", amount: -82983, categoryId: "cat_other", label: "残高調整", status: "actual", balanceAlreadyReflected: true, adjustment: true });
+  K.addTransaction(s, { accountId: "sub", date: "2026-09-30", amount: -1017, categoryId: "cat_other", label: "残高調整", status: "actual", balanceAlreadyReflected: true, adjustment: true });
+  const r = E.apply(s, [
+    { action: "change", target: "残高調整", from: { date: "2026-09-30", amount: 82983 }, to: { amount: 80000, label: "口座へ入金テスト" } },
+    { action: "add", type: "expense", date: "2026-09-30", amount: 2983, label: "チャージ", account: "テスト給料口座", category: "生活費", reflected: true },
+    { action: "change", target: "残高調整", from: { date: "2026-09-30", amount: 1017 }, to: { label: "支払いテスト", category: "生活費" } },
+  ], { today: TODAY });
+  assert.deepEqual(r.items.map((i) => i.status), ["ok", "ok", "ok"]);
+  assert.deepEqual(s.accounts.map((a) => a.balance), [100000, 5000]);
+  const a = tx(s, "口座へ入金テスト")[0];
+  assert.deepEqual([a.amount, a.adjustment, a.balanceAlreadyReflected, a.categoryId], [-80000, undefined, true, "cat_other"]);
+  const b = tx(s, "支払いテスト")[0];
+  assert.deepEqual([b.amount, b.adjustment, b.categoryId], [-1017, undefined, "cat_living"]);
+  assert.ok(r.items[0].notes.some((n) => /ふつうの記録/.test(n)));
+  assert.ok(r.items[0].notes.some((n) => /動きません/.test(n)));
+  assert.match(r.items[0].text, /残高調整/);
+  // 保存・読み込みしても残る
+  const again = K.normalizeState(JSON.parse(JSON.stringify(s)));
+  assert.equal(again.transactions.find((x) => x.label === "支払いテスト").adjustment, undefined);
+});
