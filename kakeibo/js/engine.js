@@ -86,6 +86,7 @@
       if (!Array.isArray(r.doneDates)) r.doneDates = [];
       if (!Array.isArray(r.days)) r.days = [Number(r.days) || 1];
       if (r.weeks !== undefined && !(Number(r.weeks) > 0)) delete r.weeks;
+      if (r.nth !== undefined && ![1, 2, 3, 4, -1].includes(Number(r.nth))) delete r.nth;
     });
     return s;
   };
@@ -428,6 +429,19 @@
     return out;
   };
 
+  // 月ごとの「第N曜日」ルール（nth: 1〜4、-1 は最終。weekday: 0=日〜6=土）
+  const isNthWeekday = (r) => !isWeekly(r) && !!r && [1, 2, 3, 4, -1].includes(Number(r.nth)) && r.weekday !== undefined && r.weekday !== "";
+  const nthWeekdayOfMonth = (y, m, nth, weekday) => {
+    const wd = ((Math.round(Number(weekday)) % 7) + 7) % 7;
+    const dim = D.daysInMonth(y, m);
+    if (Number(nth) === -1) {
+      const last = D.ymd(y, m, dim);
+      return D.ymd(y, m, dim - ((D.dow(last) - wd + 7) % 7));
+    }
+    const day = 1 + ((wd - D.dow(D.ymd(y, m, 1)) + 7) % 7) + (Number(nth) - 1) * 7;
+    return day <= dim ? D.ymd(y, m, day) : null;
+  };
+
   // settings は「毎月の給料日」ルール（onPayday）の日付計算に使う
   const expandRecurrence = (r, start, end, settings) => {
     if (isWeekly(r)) return expandWeekly(r, start, end);
@@ -448,6 +462,12 @@
         const date = paydayOfMonth(settings || { payday: 25, paydayAdjust: "prev" }, cursor.slice(0, 7));
         const inRange = (!r.startDate || date >= r.startDate.slice(0, 7)) && (!r.endDate || date.slice(0, 7) <= r.endDate.slice(0, 7));
         if (inRange && date >= start && date <= end) out.push({ date, original: date });
+      } else if (monthsFromAnchor % interval === 0 && isNthWeekday(r)) {
+        const original = nthWeekdayOfMonth(y, m, r.nth, r.weekday);
+        if (original && !(r.startDate && original < r.startDate) && !(r.endDate && original > r.endDate)) {
+          const date = D.adjustBusinessDay(original, r.adjust);
+          if (date >= start && date <= end) out.push({ date, original });
+        }
       } else if (monthsFromAnchor % interval === 0) {
         const dim = D.daysInMonth(y, m);
         [...new Set(r.days.map((d) => Math.min(Number(d), dim)))].forEach((day) => {
@@ -935,7 +955,7 @@
     const scopeIds = opts.accountIds || null;
     const items = [];
     state.transactions.forEach((t) => {
-      if (t.status !== "actual" || t.amount >= 0 || t.adjustment) return;
+      if (t.status !== "actual" || t.amount >= 0 || t.adjustment || t.fx) return;
       if (t.date < start || t.date > end) return;
       if (scopeIds && !scopeIds.includes(t.accountId)) return;
       items.push({ date: t.date, label: t.label, amount: -t.amount, categoryId: t.categoryId, accountId: t.accountId, kind: "actual" });
@@ -961,6 +981,60 @@
     const list = [...groups.values()].sort((a, b) => b.total - a.total);
     list.forEach((g) => g.items.sort((a, b) => (a.date < b.date ? -1 : 1)));
     return { total: list.reduce((s, g) => s + g.total, 0), groups: list };
+  };
+
+  /* ---------- FXの記録（日ごとの損益・リベート） ---------- */
+
+  // FXの記録は FX口座の実績（t.fx: "pl" 損益 / "rebate" リベート）。口座残高は動くが、支出・収入の集計には入れない
+  const FX_LABEL = { pl: "FX損益", rebate: "FXリベート" };
+
+  const fxAccountId = (state) => {
+    const id = state.settings.fxAccountId;
+    if (id && accountById(state, id)) return id;
+    const a = state.accounts.find((x) => /fx|ＦＸ|エフエックス/i.test(x.name));
+    return a ? a.id : "";
+  };
+
+  // pl（損益・マイナス可）と rebate（リベート）をその日の記録として追加。0 の項目は作らない
+  const addFxDay = (state, { date, pl = 0, rebate = 0, accountId, reflected = false }) => {
+    const acc = accountId || fxAccountId(state);
+    const out = [];
+    [["pl", Math.round(Number(pl) || 0)], ["rebate", Math.round(Number(rebate) || 0)]].forEach(([kind, amount]) => {
+      if (!amount) return;
+      out.push(addTransaction(state, { accountId: acc, date, amount, categoryId: WINDFALL, label: FX_LABEL[kind], status: "actual", fx: kind, balanceAlreadyReflected: !!reflected }));
+    });
+    return out;
+  };
+
+  const removeFxDay = (state, date) => {
+    state.transactions.filter((t) => t.fx && t.date === date).forEach((t) => removeTransaction(state, t.id));
+  };
+
+  // 日ごとの一覧と、起点日から今日までの合計・1日平均（土日も1日と数える）、今年の合計
+  const fxSummary = (state, opts = {}) => {
+    const today = opts.today || D.today();
+    const recs = state.transactions.filter((t) => t.fx && t.status === "actual");
+    const map = new Map();
+    recs.forEach((t) => {
+      if (!map.has(t.date)) map.set(t.date, { date: t.date, pl: 0, rebate: 0, total: 0 });
+      const d = map.get(t.date);
+      d[t.fx === "rebate" ? "rebate" : "pl"] += t.amount;
+      d.total += t.amount;
+    });
+    const days = [...map.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+    const start = opts.start || state.settings.fxStartDate || (days[0] ? days[0].date : today);
+    const inRange = days.filter((d) => d.date >= start && d.date <= today);
+    const sum = (list, k) => list.reduce((a, d) => a + d[k], 0);
+    const dayCount = start <= today ? D.diffDays(start, today) + 1 : 0;
+    const total = sum(inRange, "total");
+    const year = today.slice(0, 4);
+    const thisYear = days.filter((d) => d.date.startsWith(year));
+    return {
+      start, today, days, dayCount,
+      pl: sum(inRange, "pl"), rebate: sum(inRange, "rebate"), total,
+      average: dayCount ? Math.round(total / dayCount) : 0,
+      yearTotal: sum(thisYear, "total"), year: Number(year),
+    };
   };
 
   /* ---------- アラート ---------- */
@@ -1035,6 +1109,7 @@
     expandRecurrence, isWeekly, nextPayday, paydayOfMonth, collectEvents, forecast, hasInFlightInScope, resolveScope,
     sortedPayslips, overtimeRate, estimateNextPay,
     ageOn, birthdayAtAge, goalTargetDate, goalPlan, earningsCalendar, incomeCalendar, incomeYearToDate, isWorkday, categorySummary, windfallOfYear, alerts,
+    FX_LABEL, fxAccountId, addFxDay, removeFxDay, fxSummary, isNthWeekday, nthWeekdayOfMonth,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

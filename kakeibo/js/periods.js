@@ -50,7 +50,7 @@
   /**
    * 期間内の予定（定期ルールの各回・単発の予定・記録済みの実績）。別口座（合計に含めない口座）の分は other: true
    * 生活費・雑費のカテゴリの取引はルール計算と二重になるので含めない（まとめ買いなど定期ルールの回として記録した分は含める）。
-   * 口座間の振替・残高調整も含めない
+   * 口座間の振替・残高調整・FXの記録（損益・リベート）も含めない
    */
   const periodItems = (state, start, end) => {
     const items = [];
@@ -67,7 +67,7 @@
       });
     });
     state.transactions.forEach((t) => {
-      if (t.adjustment || t.date < start || t.date > end) return;
+      if (t.adjustment || t.fx || t.date < start || t.date > end) return;
       const group = groupOf(state, t.categoryId, t.amount);
       if ((group === "living" || group === "misc") && !t.recurrenceId) return;
       items.push({ date: t.date, label: t.label || (K.categoryById(state, t.categoryId) || {}).name || "", amount: t.amount, group, other: otherAcc(t.accountId), accountId: t.accountId, source: t.status === "planned" ? "planned" : "actual", refId: t.id });

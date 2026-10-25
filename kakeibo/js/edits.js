@@ -4,7 +4,10 @@
        { "action": "add", "type": "expense", "date": "2026-10-09", "amount": 300, "label": "名前", "reflected": true },  // 残高に反映済みの実績（残高は動かさない）
        { "action": "change", "target": "名前", "from": { "date": "2026-10-05", "amount": 500 }, "to": { "date": "2026-10-09", "amount": 600, "label": "新しい名前", "category": "カテゴリ名" } },
        { "action": "delete", "target": "名前", "date": "2026-10-05", "amount": 500 },
-       { "action": "add-account", "name": "口座名", "includeInTotal": false, "balance": 0, "note": "メモ" } ] }
+       { "action": "add-account", "name": "口座名", "includeInTotal": false, "balance": 0, "note": "メモ" },
+       { "action": "transfer", "date": "2026-10-27", "amount": 85507, "from": "Fx口座", "to": "三井住友銀行", "label": "FX出金", "status": "着金待ち", "reflected": "from" },
+       { "action": "add-recurrence", "label": "電気代", "type": "expense", "amount": 10000, "account": "口座名", "category": "固定費", "nth": 1, "weekday": "金", "adjust": "next", "start": "2026-11-01" },
+       { "action": "fx", "date": "2026-10-25", "pl": 35626, "rebate": 9881 } ] }
    金額の符号は見ない（絶対値で照合し、変更では元の符号を保つ）。edits を上から順に適用する。 */
 (function (root) {
   "use strict";
@@ -22,6 +25,21 @@
   };
   const md = (d) => `${d.slice(5, 7)}/${d.slice(8, 10)}`;
   const TYPES = { income: "income", 収入: "income", 入金: "income", expense: "expense", 支出: "expense", 出金: "expense" };
+  const STATUS = { scheduled: "scheduled", 予定: "scheduled", requested: "requested", 申請中: "requested", pending: "pending", 着金待ち: "pending", done: "done", 着金済み: "done", 着金済: "done" };
+  const ADJUST = { none: "none", そのまま: "none", next: "next", 翌営業日: "next", prev: "prev", 前営業日: "prev" };
+  const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+  const parseWeekday = (v) => {
+    if (typeof v === "number") return Number.isInteger(v) && v >= 0 && v <= 6 ? v : NaN;
+    const t = String(v ?? "").trim().replace(/曜日?$/, "");
+    if (/^[0-6]$/.test(t)) return Number(t);
+    const i = WEEKDAYS.indexOf(t);
+    return i >= 0 ? i : NaN;
+  };
+  const parseDays = (v) => {
+    const list = Array.isArray(v) ? v : v === undefined || v === null || v === "" ? [] : String(v).split(/[,、，\s]+/);
+    return list.map((d) => (/^末/.test(String(d)) ? 31 : Number(d))).filter((d) => Number.isInteger(d) && d >= 1 && d <= 31);
+  };
+  const signedYen = (n) => (n > 0 ? `+${K.yen(n)}` : K.yen(n));
 
   // 2: 名前が同じ、1: 一方がもう一方を含む（表記ゆれは importer の照合と同じ）、0: 一致しない
   const nameScore = (target, label) => {
@@ -202,7 +220,135 @@
         return ok(`変更: 「${h.label || "無題"}」${md(from.date)} ${K.yen(h.signed)} → ${md(toDate)} ${K.yen(sign * toAbs)}${extra ? `・${extra}` : ""}（${where}）`);
       }
 
-      return fail(`action は add・change・delete・add-account のどれかにしてください（${e.action ?? "未指定"}）`);
+      if (e.action === "transfer") {
+        const abs = absAmount(e.amount);
+        if (!isDate(e.date)) return fail(`振替できません: 日付が正しくありません（${e.date ?? "未指定"}）`);
+        if (!(abs > 0)) return fail("振替できません: 金額が正しくありません");
+        const from = I.findAccount(state, e.from);
+        const to = I.findAccount(state, e.to);
+        if (!from) return fail(`振替できません: 出金元の口座「${e.from ?? "未指定"}」が見つかりません`);
+        if (!to) return fail(`振替できません: 入金先の口座「${e.to ?? "未指定"}」が見つかりません`);
+        if (from.id === to.id) return fail("振替できません: 出金元と入金先が同じ口座です");
+        const status = e.status === undefined ? (e.date > t0 ? "scheduled" : "done") : STATUS[String(e.status).trim()];
+        if (!status) return fail(`振替できません: status は 予定・申請中・着金待ち・着金済み のどれかにしてください（${e.status}）`);
+        const refl = e.reflected === true ? "both" : e.reflected === undefined || e.reflected === false ? "" : String(e.reflected);
+        if (!["", "from", "to", "both"].includes(refl)) return fail(`振替できません: reflected は "from"・"to"・"both" のどれかにしてください（${e.reflected}）`);
+        const label = String(e.label || "").trim();
+        const head = `${md(e.date)} ${from.name} → ${to.name} ${K.yen(abs)}${label ? `「${label}」` : ""}（${K.TRANSFER_STATUS[status]}）`;
+        const dup = state.transfers.find((x) => x.date === e.date && x.amount === abs && x.fromId === from.id && x.toId === to.id);
+        if (dup) return Object.assign(item, { status: "skip", text: `スキップ（同じ日・同じ金額の振替があります）: ${head}` });
+        const tr = { id: K.uid("trf"), fromId: from.id, toId: to.id, amount: abs, date: e.date, label, status: "scheduled", fromApplied: false, toApplied: false };
+        // 残高にもう反映済みの側は、先に「反映済み」にしておき残高を動かさない
+        if (refl === "both") tr.noBalance = true;
+        if (refl === "from" && status !== "scheduled") tr.fromApplied = true;
+        if (refl === "to" && status === "done") tr.toApplied = true;
+        state.transfers.push(tr);
+        K.setTransferStatus(state, tr.id, status);
+        if (refl === "both") item.notes.push("両方の口座の残高に反映済みとして記録します（残高は動きません）");
+        else if (refl) item.notes.push(`${refl === "from" ? from.name : to.name}の残高には反映済みとして記録します（その口座の残高は動きません）`);
+        const moved = [tr.fromApplied && refl !== "from" && refl !== "both" ? `${from.name} −${K.yen(abs)}` : "", tr.toApplied && refl !== "to" && refl !== "both" ? `${to.name} +${K.yen(abs)}` : ""].filter(Boolean);
+        if (moved.length) item.notes.push(`口座の残高が動きます（${moved.join("、")}）`);
+        return ok(`振替: ${head}`);
+      }
+
+      if (e.action === "add-recurrence") {
+        const label = String(e.label || "").trim();
+        const abs = absAmount(e.amount);
+        const typeKey = String(e.type || "").trim().toLowerCase();
+        const kind = typeKey === "transfer" || typeKey === "振替" ? "transfer" : TYPES[typeKey];
+        if (!label) return fail("定期ルールを追加できません: label（名前）がありません");
+        if (!kind) return fail(`定期ルールを追加できません: type は income・expense・transfer のどれかにしてください（${e.type ?? "未指定"}）`);
+        if (!(abs > 0)) return fail(`定期ルールを追加できません: 「${label}」の金額が正しくありません`);
+        const adjust = e.adjust === undefined ? "none" : ADJUST[String(e.adjust).trim()];
+        if (!adjust) return fail(`定期ルールを追加できません: adjust は none・next・prev のどれかにしてください（${e.adjust}）`);
+        const start = e.start === undefined || e.start === "" ? t0 : e.start;
+        if (!isDate(start) || (e.end && !isDate(e.end))) return fail(`定期ルールを追加できません: 「${label}」の start・end の日付が正しくありません`);
+        let acc;
+        if (e.account) {
+          acc = I.findAccount(state, e.account);
+          if (!acc) return fail(`定期ルールを追加できません: 口座「${e.account}」が見つかりません`);
+        } else {
+          acc = K.accountById(state, kind === "income" ? state.settings.salaryAccountId : K.livingAccounts(state)[0]) || state.accounts[0];
+          if (!acc) return fail("定期ルールを追加できません: 口座がありません");
+          item.notes.push(`口座の指定がないため「${acc.name}」にしました`);
+        }
+        let toAcc = null;
+        if (kind === "transfer") {
+          toAcc = I.findAccount(state, e.to);
+          if (!toAcc) return fail(`定期ルールを追加できません: 振替の入金先「${e.to ?? "未指定"}」が見つかりません`);
+          if (toAcc.id === acc.id) return fail("定期ルールを追加できません: 出金元と入金先が同じ口座です");
+        }
+        const rule = { id: K.uid("rec"), label, amount: kind === "income" ? abs : -abs, days: [Number(state.settings.payday) || 25], onPayday: false, intervalMonths: Math.max(1, Math.round(Number(e.everyMonths) || 1)), adjust, accountId: acc.id, categoryId: "cat_other", startDate: start, endDate: e.end || "", doneDates: [] };
+        let when;
+        if (e.payday === true) {
+          rule.onPayday = true;
+          when = "毎月 給料日";
+        } else if (e.nth !== undefined) {
+          const wd = parseWeekday(e.weekday);
+          if (![1, 2, 3, 4, -1].includes(Number(e.nth)) || Number.isNaN(wd)) return fail(`定期ルールを追加できません: 「${label}」の nth（1〜4、最終は -1）か weekday が正しくありません`);
+          Object.assign(rule, { nth: Number(e.nth), weekday: wd });
+          when = `毎月 ${Number(e.nth) === -1 ? "最終" : `第${e.nth}`}${WEEKDAYS[wd]}曜`;
+        } else if (e.weeks !== undefined) {
+          const wd = parseWeekday(e.weekday);
+          const weeks = Math.round(Number(e.weeks));
+          if (!(weeks >= 1 && weeks <= 4) || Number.isNaN(wd)) return fail(`定期ルールを追加できません: 「${label}」の weeks（1〜4）か weekday が正しくありません`);
+          Object.assign(rule, { weeks, weekday: wd });
+          when = `${weeks > 1 ? `${weeks}週ごと` : "毎週"} ${WEEKDAYS[wd]}曜`;
+        } else {
+          const days = parseDays(e.days !== undefined ? e.days : e.day);
+          if (!days.length) return fail(`定期ルールを追加できません: 「${label}」の日（day・days）か payday・nth・weeks のどれかが必要です`);
+          rule.days = [...new Set(days)].sort((a, b) => a - b);
+          when = `毎月 ${rule.days.map((d) => (d >= 31 ? "末日" : `${d}日`)).join("・")}`;
+        }
+        if (rule.intervalMonths > 1 && !rule.weeks) when = when.replace("毎月", `${rule.intervalMonths}か月ごと`);
+        if (kind === "transfer") rule.toAccountId = toAcc.id;
+        else {
+          const cat = I.findCategory(state, kind, e.category, label);
+          if (e.category && cat.guessed) item.notes.push(`カテゴリ「${e.category}」が見つからないため「${(K.categoryById(state, cat.id) || {}).name}」にしました`);
+          rule.categoryId = cat.id;
+        }
+        const head = `「${label}」${K.yen(abs)} ${when}${adjust === "next" ? "（休日は翌営業日）" : adjust === "prev" ? "（休日は前営業日）" : ""}・${acc.name}${toAcc ? ` → ${toAcc.name}` : `・${(K.categoryById(state, rule.categoryId) || {}).name || ""}`}（${md(start)}〜${rule.endDate ? md(rule.endDate) : ""}）`;
+        const dup = state.recurrences.find((r) => nameScore(label, r.label) === 2 && Math.abs(r.amount) === abs && r.accountId === acc.id && (r.toAccountId || "") === (rule.toAccountId || ""));
+        if (dup) return Object.assign(item, { status: "skip", text: `スキップ（同じ名前・金額の定期ルールがあります）: ${head}` });
+        state.recurrences.push(rule);
+        // 同じ名前の単発の予定が残っていると二重になるので知らせる
+        const occ = new Set(K.expandRecurrence(rule, start, D.addDays(start, 400), state.settings).map((o) => o.date));
+        const twins = state.transactions.filter((x) => x.status === "planned" && !x.recurrenceId && occ.has(x.date) && nameScore(label, x.label));
+        if (twins.length) item.notes.push(`同じ名前の単発の予定が${twins.length}件あります（${twins.map((x) => md(x.date)).join("・")}）。二重にならないよう削除してください`);
+        return ok(`定期ルール: ${head}`);
+      }
+
+      if (e.action === "fx") {
+        if (!isDate(e.date)) return fail(`FXを記録できません: 日付が正しくありません（${e.date ?? "未指定"}）`);
+        if (e.date > t0) return fail(`FXを記録できません: 今日より後の日付です（${e.date}）`);
+        const num = (v) => (v === undefined || v === null || v === "" ? 0 : typeof v === "number" ? Math.round(v) : Math.round(Number(String(v).normalize("NFKC").replace(/[,¥円\s]/g, "").replace(/^[−ー]/, "-"))));
+        const pl = num(e.pl);
+        const rebate = num(e.rebate);
+        if (!Number.isFinite(pl) || !Number.isFinite(rebate)) return fail(`FXを記録できません: ${md(e.date)}の pl・rebate が数字ではありません`);
+        if (!pl && !rebate) return fail(`FXを記録できません: ${md(e.date)}の pl も rebate も 0 です`);
+        if (rebate < 0) return fail(`FXを記録できません: ${md(e.date)}の rebate がマイナスです`);
+        let acc;
+        if (e.account) {
+          acc = I.findAccount(state, e.account);
+          if (!acc) return fail(`FXを記録できません: 口座「${e.account}」が見つかりません`);
+        } else {
+          acc = K.accountById(state, K.fxAccountId(state));
+          if (!acc) return fail("FXを記録できません: FX口座が見つかりません（account で口座名を指定してください）");
+        }
+        const head = `${md(e.date)} ${signedYen(pl + rebate)}（損益 ${signedYen(pl)}${rebate ? `・リベート ${K.yen(rebate)}` : ""}・${acc.name}）`;
+        const same = state.transactions.filter((x) => x.fx && x.date === e.date);
+        if (same.length) {
+          const cur = { pl: 0, rebate: 0 };
+          same.forEach((x) => (cur[x.fx === "rebate" ? "rebate" : "pl"] += x.amount));
+          if (cur.pl === pl && cur.rebate === rebate) return Object.assign(item, { status: "skip", text: `スキップ（同じ日のFXの記録があります）: ${head}` });
+          return fail(`FXを記録できません: ${md(e.date)}の記録がもうあります（損益 ${signedYen(cur.pl)}・リベート ${K.yen(cur.rebate)}）。アプリの「FXの記録」で消してから入れ直してください`);
+        }
+        K.addFxDay(state, { date: e.date, pl, rebate, accountId: acc.id, reflected: e.reflected === true });
+        item.notes.push(e.reflected === true ? "FX口座の残高に反映済みとして記録します（残高は動きません）" : `${acc.name}の残高が ${signedYen(pl + rebate)} 動きます`);
+        return ok(`FX: ${head}`);
+      }
+
+      return fail(`action は add・change・delete・add-account・transfer・add-recurrence・fx のどれかにしてください（${e.action ?? "未指定"}）`);
     }
   };
 
@@ -214,7 +360,7 @@
   const summarize = (items) => {
     const count = { account: 0, add: 0, change: 0, delete: 0, skip: 0, fail: 0 };
     items.forEach((it) => {
-      if (it.status === "ok") count[it.action === "add-account" ? "account" : it.action]++;
+      if (it.status === "ok") count[it.action === "add-account" ? "account" : ["transfer", "add-recurrence", "fx"].includes(it.action) ? "add" : it.action]++;
       else count[it.status]++;
     });
     return { items, count, applicable: count.account + count.add + count.change + count.delete };

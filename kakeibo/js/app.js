@@ -544,6 +544,7 @@
     ["periods", "給料期間の収支", "期間ごとの費用・貯金見込み・予算枠・リボ"],
     ["import", "画像から取り込む", "レシート・残高・請求・給与明細"],
     ["earncal", "稼ぐ目安カレンダー", "年収目標・貯金目標に平日いくら"],
+    ["fx", "FXの記録", "日ごとの損益・リベート、1日平均"],
     ["settings", "設定・データ", "給料日・通知・バックアップ"],
   ];
 
@@ -584,6 +585,11 @@
       const every = Number(r.weeks) > 1 ? `${r.weeks}週ごと` : "毎週";
       const adj = r.adjust === "prev" ? "（休日は前営業日）" : r.adjust === "next" ? "（休日は翌営業日）" : "";
       return `${every} ${WEEKDAY_NAMES[Number(r.weekday) || 0]}曜${adj}`;
+    }
+    if (K.isNthWeekday(r)) {
+      const every = Number(r.intervalMonths) > 1 ? `${r.intervalMonths}か月ごと` : "毎月";
+      const adj = r.adjust === "prev" ? "（休日は前営業日）" : r.adjust === "next" ? "（休日は翌営業日）" : "";
+      return `${every} ${Number(r.nth) === -1 ? "最終" : `第${r.nth}`}${WEEKDAY_NAMES[Number(r.weekday) || 0]}曜${adj}`;
     }
     if (r.onPayday) return `毎月 給料日${r.startDate ? `（${r.startDate.slice(0, 7).replace("-", "/")}〜${r.endDate ? r.endDate.slice(0, 7).replace("-", "/") : ""}）` : ""}`;
     const days = r.days.map((d) => (Number(d) >= 31 ? "末日" : `${d}日`)).join("・");
@@ -830,6 +836,44 @@
       ${mode === "income" ? viewIncomeCal(t, month) : viewSavingsCal(t, month)}`;
   };
 
+  /* ---------- 画面: FXの記録 ---------- */
+
+  const plusYen = (n) => (n > 0 ? `+${yen(n)}` : yen(n));
+
+  const viewFx = () => {
+    const t = today();
+    const fxId = K.fxAccountId(state);
+    if (!state.accounts.length) return needAccounts();
+    const f = K.fxSummary(state, { today: t });
+    let html = `<section class="card"><h3>${esc(D.dayLabel(f.start))}から${esc(D.dayLabel(t))}まで（${f.dayCount}日）</h3>
+      <div class="tiles">
+        <div class="tile"><div class="label">利益の合計</div><div class="value num ${f.total > 0 ? "pos" : ""}">${esc(plusYen(f.total))}</div><div class="sub num">損益 ${esc(plusYen(f.pl))}・リベート ${esc(yen(f.rebate))}</div></div>
+        <div class="tile"><div class="label">1日平均</div><div class="value num">${esc(plusYen(f.average))}</div><div class="sub">土日も1日と数える</div></div>
+        <div class="tile"><div class="label">${f.year}年の合計</div><div class="value num">${esc(plusYen(f.yearTotal))}</div><div class="sub">給与以外の所得の目安は年20万円</div></div>
+      </div>
+      <p class="tiny" style="margin:8px 0 0">利益 ＝ MT5の損益（マイナス残高の補てんを含む）＋ リベート。FX口座への入金・出金は「振替」で記録するので、ここには入りません。</p></section>`;
+
+    html += `<section class="card"><h3>今日の記録</h3><form class="stack" data-form="fx">
+      <div class="grid2"><label class="field">日付<input type="date" name="date" value="${esc(t)}" max="${esc(t)}" required></label>
+      <label class="field">FX口座<select name="accountId">${accountOptions(fxId)}</select></label></div>
+      <div class="grid2"><label class="field">MT5の損益（マイナスは「-」）<input class="num" name="pl" inputmode="text" placeholder="例: 35626 / -10611"></label>
+      <label class="field">リベート<input class="num" name="rebate" inputmode="numeric" placeholder="例: 9881"></label></div>
+      <details><summary>詳細設定</summary><label class="check" style="margin-top:8px"><input type="checkbox" name="reflected"> FX口座の残高はもう更新済み（残高を変えずに記録だけする）</label></details>
+      <button class="primary" type="submit">記録する</button></form></section>`;
+
+    const rows = [...f.days].reverse();
+    html += `<section class="card"><h3>日ごとの記録</h3>${rows.length
+      ? `<ul class="list">${rows.map((d) => `<li><span class="date">${esc(D.dayLabel(d.date))}</span><div class="grow"><div class="num ${d.total > 0 ? "pos" : ""}"><b>${esc(plusYen(d.total))}</b></div>
+          <div class="meta num">損益 ${esc(plusYen(d.pl))}${d.rebate ? `・リベート ${esc(yen(d.rebate))}` : ""}${d.date < f.start ? "・平均の対象外" : ""}</div></div>
+          <span class="actions"><button class="small ghost danger" data-action="fx-delete" data-key="${esc(d.date)}" aria-label="${esc(D.dayLabel(d.date))}の記録を削除">×</button></span></li>`).join("")}</ul>`
+      : `<p class="muted small">まだ記録がありません</p>`}</section>`;
+
+    html += `<section class="card"><h3>平均の起点日</h3><form class="stack" data-form="fx-settings">
+      <label class="field">この日から今日までの日数で割ります（空欄なら最初の記録の日）<input type="date" name="fxStartDate" value="${esc(state.settings.fxStartDate || "")}"></label>
+      <button type="submit">保存</button></form></section>`;
+    return html;
+  };
+
   /* ---------- 画面: 給料期間の収支 ---------- */
 
   const PER_TABS = [["summary", "集計"], ["calendar", "カレンダー"], ["items", "予定"], ["budget", "予算枠"], ["revo", "リボ"]];
@@ -1046,8 +1090,8 @@
     const icon = { ok: "", skip: "スキップ", fail: "適用しない" };
     return `<div class="small" style="margin-bottom:6px">${c.account ? `口座の追加 ${c.account}・` : ""}追加 ${c.add}・変更 ${c.change}・削除 ${c.delete}${c.skip ? `・スキップ ${c.skip}` : ""}${c.fail ? `・<b style="color:var(--critical)">適用しない ${c.fail}</b>` : ""}</div>
       <ul class="list">${res.items.map((it) => `<li style="display:block">
-        <div class="row" style="gap:8px;align-items:flex-start"><span class="badge ${it.status === "fail" ? "" : "accent"}" style="flex:none">${esc(it.status === "ok" ? { add: "追加", change: "変更", delete: "削除", "add-account": "口座の追加" }[it.action] : icon[it.status])}</span>
-        <div class="grow small" style="word-break:break-all;${it.status === "fail" ? "color:var(--critical)" : ""}">${esc(it.text.replace(/^(追加|変更|削除|口座の追加): /, ""))}</div></div>
+        <div class="row" style="gap:8px;align-items:flex-start"><span class="badge ${it.status === "fail" ? "" : "accent"}" style="flex:none">${esc(it.status === "ok" ? { add: "追加", change: "変更", delete: "削除", "add-account": "口座の追加", transfer: "振替", "add-recurrence": "定期ルール", fx: "FX" }[it.action] : icon[it.status])}</span>
+        <div class="grow small" style="word-break:break-all;${it.status === "fail" ? "color:var(--critical)" : ""}">${esc(it.text.replace(/^(追加|変更|削除|口座の追加|振替|定期ルール|FX): /, ""))}</div></div>
         ${it.notes.map((n) => `<div class="tiny" style="margin:2px 0 0 0;color:var(--critical)">⚠ ${esc(n)}</div>`).join("")}</li>`).join("")}</ul>`;
   };
 
@@ -1299,6 +1343,7 @@
     settings: ["設定・データ", viewSettings],
     import: ["画像から取り込む", viewImport],
     earncal: ["稼ぐ目安カレンダー", viewEarnCal],
+    fx: ["FXの記録", viewFx],
     periods: ["給料期間の収支", viewPeriods],
   };
   const TABS = { home: ["ホーム", viewHome], forecast: ["残高予測", viewForecast], input: ["入力", viewInput], analysis: ["カテゴリ分析", viewAnalysis], menu: ["メニュー", viewMenu] };
@@ -1674,7 +1719,10 @@
     const kind = r && r.toAccountId ? "transfer" : r && r.amount > 0 ? "income" : preset.kind || "expense";
     const weekly = r ? K.isWeekly(r) : !!preset.weekly;
     const weeksNow = r && K.isWeekly(r) ? Number(r.weeks) : 1;
-    const weekdayNow = r && K.isWeekly(r) ? Number(r.weekday) || 0 : preset.weekday !== undefined ? preset.weekday : 6;
+    const nth = r ? K.isNthWeekday(r) : false;
+    const weekdayNow = r && (K.isWeekly(r) || nth) ? Number(r.weekday) || 0 : preset.weekday !== undefined ? preset.weekday : 6;
+    const nthNow = nth ? Number(r.nth) : 1;
+    const schedNow = weekly ? "weekly" : nth ? "nth" : "monthly";
     const adjNow = r ? r.adjust || "none" : preset.adjust || "next";
     sheetActions = { delete: () => {
       if (!confirm(`「${r.label}」を削除しますか？`)) return false;
@@ -1686,9 +1734,11 @@
       <label class="field">名前<input name="label" value="${esc(r ? r.label : preset.label || "")}" placeholder="例: 寮費、YouTube Premium、PayPay後払い、給料、週末のまとめ買い" required></label>
       <div class="grid2"><label class="field">種類<select name="kind"><option value="expense" ${kind === "expense" ? "selected" : ""}>支出</option><option value="income" ${kind === "income" ? "selected" : ""}>収入</option><option value="transfer" ${kind === "transfer" ? "selected" : ""}>口座間の振替</option></select></label>
       <label class="field">金額（1回あたり）<input name="amount" inputmode="numeric" value="${r ? Math.abs(r.amount) : ""}" required></label></div>
-      <label class="field">くり返し<select name="schedule" id="recSchedule"><option value="monthly" ${weekly ? "" : "selected"}>月ごと（日にちで決める）</option><option value="weekly" ${weekly ? "selected" : ""}>週ごと（曜日で決める）</option></select></label>
+      <label class="field">くり返し<select name="schedule" id="recSchedule"><option value="monthly" ${schedNow === "monthly" ? "selected" : ""}>月ごと（日にちで決める）</option><option value="nth" ${schedNow === "nth" ? "selected" : ""}>月ごと（第N曜日で決める）</option><option value="weekly" ${schedNow === "weekly" ? "selected" : ""}>週ごと（曜日で決める）</option></select></label>
       <div class="grid2" data-sched="weekly"><label class="field">周期<select name="weeks">${[1, 2, 3, 4].map((w) => `<option value="${w}" ${weeksNow === w ? "selected" : ""}>${w === 1 ? "毎週" : `${w}週ごと`}</option>`).join("")}</select></label>
       <label class="field">曜日<select name="weekday">${WEEKDAY_NAMES.map((n, i) => `<option value="${i}" ${weekdayNow === i ? "selected" : ""}>${n}曜</option>`).join("")}</select></label></div>
+      <div class="grid2" data-sched="nth"><label class="field">第何<select name="nth">${[[1, "第1"], [2, "第2"], [3, "第3"], [4, "第4"], [-1, "最終"]].map(([v, n]) => `<option value="${v}" ${nthNow === v ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+      <label class="field">曜日<select name="nthWeekday">${WEEKDAY_NAMES.map((n, i) => `<option value="${i}" ${weekdayNow === i ? "selected" : ""}>${n}曜</option>`).join("")}</select></label></div>
       <label class="check" data-sched="monthly"><input type="checkbox" name="onPayday" ${r && r.onPayday ? "checked" : ""}> 毎月の給料日と同じ日（電気代など給料のあとに払うもの。下の「日」は使いません）</label>
       <div class="grid2" data-sched="monthly"><label class="field">日（複数はカンマ区切り、末日は「末」）<input name="days" value="${esc(daysText)}" placeholder="例: 27 または 5, 20"></label>
       <label class="field">周期<select name="intervalMonths">${[1, 2, 3, 6, 12].map((m) => `<option value="${m}" ${Number(r ? r.intervalMonths || 1 : 1) === m ? "selected" : ""}>${m === 1 ? "毎月" : `${m}か月ごと`}</option>`).join("")}</select></label></div>
@@ -1707,8 +1757,9 @@
         .map((d) => (/^末/.test(d) ? 31 : Number(d.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)))))
         .filter((d) => d >= 1 && d <= 31);
       const isWeeklyRule = fd.get("schedule") === "weekly";
-      const onPayday = !isWeeklyRule && fd.get("onPayday") === "on";
-      if (Number.isNaN(amt) || (!isWeeklyRule && !days.length && !onPayday)) return toast("金額と日付を確認してください"), false;
+      const isNthRule = fd.get("schedule") === "nth";
+      const onPayday = !isWeeklyRule && !isNthRule && fd.get("onPayday") === "on";
+      if (Number.isNaN(amt) || (!isWeeklyRule && !isNthRule && !days.length && !onPayday)) return toast("金額と日付を確認してください"), false;
       const isTransfer = fd.get("kind") === "transfer";
       if (isTransfer && (!fd.get("toAccountId") || fd.get("toAccountId") === fd.get("accountId"))) return toast("振替の入金先を出金元と別の口座にしてください"), false;
       const data = {
@@ -1729,8 +1780,10 @@
         delete r.tentative;
         delete r.weeks;
         delete r.weekday;
+        delete r.nth;
       }
       if (isWeeklyRule) Object.assign(data, { weeks: Number(fd.get("weeks")) || 1, weekday: Number(fd.get("weekday")) || 0 });
+      if (isNthRule) Object.assign(data, { nth: Number(fd.get("nth")) || 1, weekday: Number(fd.get("nthWeekday")) || 0 });
       if (r) Object.assign(r, data);
       else state.recurrences.push(Object.assign({ id: K.uid("rec"), doneDates: [] }, data));
       commit();
@@ -1985,6 +2038,11 @@
       const r = state.recurrences.find((x) => x.id === b.dataset.id);
       ui.draft = { amount: Math.abs(r.amount), categoryId: r.categoryId, accountId: r.accountId, label: r.label };
       render();
+    },
+    "fx-delete": (b) => {
+      const date = b.dataset.key;
+      if (!confirm(`${D.dayLabel(date)}のFXの記録を削除しますか？（FX口座の残高も戻ります）`)) return;
+      undoable("削除しました", () => K.removeFxDay(state, date));
     },
     "go-transfer": () => { ui.tab = "input"; ui.sub = null; ui.inputKind = "transfer"; render(); },
     "account-new": () => accountSheet(null),
@@ -2423,6 +2481,21 @@
         baseMonthlyPay: read("baseMonthlyPay"),
         annualBonus: read("annualBonus"),
       });
+      commit();
+      toast("保存しました");
+    } else if (kind === "fx") {
+      const date = fd.get("date");
+      const pl = money(String(fd.get("pl") || "").replace(/^[−ー]/, "-"));
+      const rebate = money(fd.get("rebate"));
+      if (Number.isNaN(pl) || Number.isNaN(rebate)) return toast("金額を確認してください");
+      if (!pl && !rebate) return toast("損益かリベートを入力してください");
+      if (date > t) return toast("今日までの日付にしてください");
+      if (state.transactions.some((x) => x.fx && x.date === date)) return toast("その日の記録はもうあります（一覧の×で消してから入れ直してください）");
+      const accountId = fd.get("accountId");
+      if (accountId && accountId !== state.settings.fxAccountId) state.settings.fxAccountId = accountId;
+      undoable(`${D.dayLabel(date)}のFXを記録しました（${plusYen(pl + rebate)}）`, () => K.addFxDay(state, { date, pl, rebate, accountId, reflected: fd.get("reflected") === "on" }));
+    } else if (kind === "fx-settings") {
+      state.settings.fxStartDate = fd.get("fxStartDate") || "";
       commit();
       toast("保存しました");
     } else if (kind === "reminder") {
