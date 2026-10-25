@@ -1068,12 +1068,20 @@
       } else if (f.min.balance < threshold) {
         out.push({ level: "warning", kind: "threshold", message: `${D.dayLabelLong(f.min.date)}に残高が${yen(f.min.balance)}まで下がります（目安 ${yen(threshold)}）`, date: f.min.date });
       }
-      const inflight = inFlightTotal(state, "total");
-      if (inflight && !f.firstNegative) {
-        const p = forecast(state, { today, start: today, end: D.addDays(today, horizon), scenario: "pessimistic" });
-        if (p.firstNegative) out.push({ level: "info", kind: "inflight-risk", message: `着金待ちの${yen(inflight)}が入らなかった場合は、${D.dayLabelLong(p.firstNegative.date)}に残高がマイナスになります`, date: p.firstNegative.date });
-      }
     }
+    // 今日が着金予定日の振替を、入金先の口座ごとにまとめて知らせる
+    const arrivals = new Map();
+    state.transfers.forEach((t) => {
+      if (t.status === "done" || t.date !== today) return;
+      const cur = arrivals.get(t.toId) || { amount: 0, count: 0 };
+      cur.amount += t.amount;
+      cur.count += 1;
+      arrivals.set(t.toId, cur);
+    });
+    arrivals.forEach((v, toId) => {
+      const to = accountById(state, toId);
+      out.push({ level: "info", kind: "arrival-today", message: `今日（${D.dayLabelLong(today)}）は${to ? to.name : "?"}に${yen(v.amount)}が着金予定です${v.count > 1 ? `（${v.count}件）` : ""}。届いたら「着金した」を押してください`, date: today, accountId: toId, amount: v.amount });
+    });
     if (state.accounts.length) {
       const f2 = forecast(state, { today, start: today, end: D.addDays(today, horizon), scenario: "optimistic" });
       if (f2.livingShortage) {

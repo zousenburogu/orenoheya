@@ -175,7 +175,7 @@ test("着金した：実際の額が違えば差を入金先に記録し、FX口
   assert.equal(s.transactions.filter((t) => /着金額の差/.test(t.label)).length, 3);
 });
 
-test("アラート：着金待ちは入る前提で判定し、入らないとマイナスになるときはお知らせだけ出す", () => {
+test("アラート：着金待ちは入る前提で判定し、着金予定日には入る額をお知らせする", () => {
   const s = setup();
   s.accounts[0].balance = 3000;
   s.accounts[1].balance = 50000;
@@ -183,9 +183,17 @@ test("アラート：着金待ちは入る前提で判定し、入らないと�
   K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 50000, date: "2026-10-26", status: "pending", label: "FX出金" });
   const al = K.alerts(s, { today: TODAY });
   assert.ok(!al.some((a) => a.kind === "negative"));
-  const info = al.find((a) => a.kind === "inflight-risk");
-  assert.equal(info.level, "info");
-  assert.match(info.message, /入らなかった場合/);
+  // 「入らなかった場合はマイナス」のお知らせは出さない
+  assert.ok(!al.some((a) => a.kind === "inflight-risk"));
+  assert.ok(!al.some((a) => a.kind === "arrival-today"));
+  // 着金予定日の当日は、入金先ごとの合計を知らせる
+  K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 1200, date: "2026-10-26", status: "requested", label: "FX出金" });
+  K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 999, date: "2026-10-26", status: "done", label: "着金済み" });
+  const on = K.alerts(s, { today: "2026-10-26" }).filter((a) => a.kind === "arrival-today");
+  assert.equal(on.length, 1);
+  assert.equal(on[0].level, "info");
+  assert.equal(on[0].amount, 51200);
+  assert.match(on[0].message, /¥51,200が着金予定です（2件）/);
   // 着金予定日を過ぎると「未着金」も出る
   assert.ok(K.alerts(s, { today: "2026-10-28" }).some((a) => a.kind === "overdue-transfer"));
 });
