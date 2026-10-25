@@ -375,11 +375,22 @@
   };
 
   // 着金待ちの振替を「着金済み」にする。reflect=false は「入金先の残高は手入力で更新済み」（二重に足さない）
-  const completeTransfer = (state, id, { reflect = true } = {}) => {
+  // actualAmount: 実際に入った額。振替の額と違えば、差を入金先の「着金額の差」として記録する（FX口座からの振替ならFXの損益に入れる）
+  const completeTransfer = (state, id, { reflect = true, actualAmount, today } = {}) => {
     const t = state.transfers.find((x) => x.id === id);
     if (!t) return null;
     if (!reflect) t.toApplied = true;
-    return setTransferStatus(state, id, "done");
+    const done = setTransferStatus(state, id, "done");
+    const actual = actualAmount === undefined || actualAmount === null || actualAmount === "" ? NaN : Math.round(Number(actualAmount));
+    if (Number.isFinite(actual) && actual > 0 && actual !== t.amount) {
+      const diff = actual - t.amount;
+      const fromFx = !!t.fromId && t.fromId === fxAccountId(state);
+      addTransaction(state, Object.assign({
+        accountId: t.toId, date: today || D.today(), amount: diff, categoryId: diff > 0 ? WINDFALL : "cat_other",
+        label: `着金額の差（${t.label || "振替"}）`, status: "actual", balanceAlreadyReflected: !reflect,
+      }, fromFx ? { fx: "pl" } : {}));
+    }
+    return done;
   };
 
   // 着金待ち・申請中で、入金先が対象の口座に入っている振替の合計
@@ -1048,17 +1059,23 @@
     const today = opts.today || D.today();
     const out = [];
     const horizon = opts.horizonDays || 60;
+    // 着金待ちは着金予定日に入る前提（optimistic）で判定する。着金予定日を過ぎた分は下の「未着金」で知らせる
     if (state.accounts.length) {
-      const f = forecast(state, { today, start: today, end: D.addDays(today, horizon), scenario: "pessimistic" });
+      const f = forecast(state, { today, start: today, end: D.addDays(today, horizon), scenario: "optimistic" });
       const threshold = Number(state.settings.threshold) || 0;
       if (f.firstNegative) {
         out.push({ level: "critical", kind: "negative", message: `${D.dayLabelLong(f.firstNegative.date)}に残高がマイナス（${yen(f.firstNegative.balance)}）になる予測です`, date: f.firstNegative.date });
       } else if (f.min.balance < threshold) {
         out.push({ level: "warning", kind: "threshold", message: `${D.dayLabelLong(f.min.date)}に残高が${yen(f.min.balance)}まで下がります（目安 ${yen(threshold)}）`, date: f.min.date });
       }
+      const inflight = inFlightTotal(state, "total");
+      if (inflight && !f.firstNegative) {
+        const p = forecast(state, { today, start: today, end: D.addDays(today, horizon), scenario: "pessimistic" });
+        if (p.firstNegative) out.push({ level: "info", kind: "inflight-risk", message: `着金待ちの${yen(inflight)}が入らなかった場合は、${D.dayLabelLong(p.firstNegative.date)}に残高がマイナスになります`, date: p.firstNegative.date });
+      }
     }
     if (state.accounts.length) {
-      const f2 = forecast(state, { today, start: today, end: D.addDays(today, horizon), scenario: "pessimistic" });
+      const f2 = forecast(state, { today, start: today, end: D.addDays(today, horizon), scenario: "optimistic" });
       if (f2.livingShortage) {
         const names = f2.livingShortage.accountIds.map((id) => (accountById(state, id) || {}).name).join("・");
         out.push({ level: "critical", kind: "living-shortage", message: `${D.dayLabelLong(f2.livingShortage.date)}に生活費を払う口座（${names}）の残高がなくなります`, date: f2.livingShortage.date });

@@ -149,3 +149,43 @@ test("fx：FX口座に記録し、同じ内容はスキップ、違う内容・�
   assert.equal(K.accountById(s, "fx").balance, -27491 + 45507);
   assert.deepEqual(K.fxSummary(s, { today: TODAY }).days.map((d) => [d.date, d.pl, d.rebate]), [["2026-10-24", -29270, 1779], ["2026-10-25", 35626, 9881]]);
 });
+
+/* ---------- 着金額の差・着金待ちのアラート ---------- */
+
+test("着金した：実際の額が違えば差を入金先に記録し、FX口座からならFXの損益に入る", () => {
+  const s = setup();
+  s.accounts[1].balance = 100000;
+  const a = K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 85507, date: "2026-10-27", status: "pending", label: "FX出金" });
+  const b = K.addTransfer(s, { fromId: "bank", toId: "fx", amount: 1000, date: "2026-10-27", status: "pending", label: "テスト" });
+  assert.equal(K.accountById(s, "fx").balance, 100000 - 85507 + 0);
+  K.completeTransfer(s, a.id, { actualAmount: 85300, today: "2026-10-27" });
+  assert.equal(K.accountById(s, "bank").balance, 100000 - 1000 + 85300);
+  const diff = s.transactions.find((t) => /着金額の差/.test(t.label));
+  assert.deepEqual([diff.amount, diff.fx, diff.accountId, diff.date], [-207, "pl", "bank", "2026-10-27"]);
+  assert.equal(K.fxSummary(s, { today: "2026-10-27", start: "2026-10-27" }).total, -207);
+  // 同じ額なら差は記録しない。FX口座以外からなら fx にしない
+  K.completeTransfer(s, b.id, { actualAmount: 1100, today: "2026-10-27" });
+  const d2 = s.transactions.filter((t) => /着金額の差/.test(t.label))[1];
+  assert.deepEqual([d2.amount, d2.fx, d2.categoryId], [100, undefined, K.WINDFALL]);
+  // 残高はもう更新した場合は、差も残高を動かさない
+  const c = K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 500, date: "2026-10-27", status: "pending", label: "FX出金" });
+  const before = K.accountById(s, "bank").balance;
+  K.completeTransfer(s, c.id, { reflect: false, actualAmount: 480, today: "2026-10-27" });
+  assert.equal(K.accountById(s, "bank").balance, before);
+  assert.equal(s.transactions.filter((t) => /着金額の差/.test(t.label)).length, 3);
+});
+
+test("アラート：着金待ちは入る前提で判定し、入らないとマイナスになるときはお知らせだけ出す", () => {
+  const s = setup();
+  s.accounts[0].balance = 3000;
+  s.accounts[1].balance = 50000;
+  K.addTransaction(s, { accountId: "bank", date: "2026-10-27", amount: -3436, categoryId: "cat_repay", label: "後払いテスト", status: "planned" });
+  K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 50000, date: "2026-10-26", status: "pending", label: "FX出金" });
+  const al = K.alerts(s, { today: TODAY });
+  assert.ok(!al.some((a) => a.kind === "negative"));
+  const info = al.find((a) => a.kind === "inflight-risk");
+  assert.equal(info.level, "info");
+  assert.match(info.message, /入らなかった場合/);
+  // 着金予定日を過ぎると「未着金」も出る
+  assert.ok(K.alerts(s, { today: "2026-10-28" }).some((a) => a.kind === "overdue-transfer"));
+});

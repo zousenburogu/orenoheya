@@ -192,9 +192,12 @@
     const t = today();
     const total = K.sumBalances(state, K.totalAccountIds(state));
     const payday = rangeEnd("payday", t);
-    const f = K.forecast(state, { today: t, end: payday, scenario: "pessimistic" });
+    // 着金待ちは着金予定日に入る前提で表示し、入らなかった場合の額は小さく添える
+    const f = K.forecast(state, { today: t, end: payday, scenario: "optimistic" });
     const al = K.alerts(state, { today: t });
     const inflightHome = K.inFlightTotal(state, "total");
+    const fp = inflightHome ? K.forecast(state, { today: t, end: payday, scenario: "pessimistic" }) : null;
+    const eve = (x) => (x.days[x.days.length - 2] || x.days[0]).balance;
     const excluded = state.accounts.filter((a) => a.includeInTotal === false);
 
     let html = "";
@@ -203,8 +206,8 @@
         <div class="sub">${excluded.length ? `合計外: ${excluded.map((a) => `${esc(a.name)} ${esc(yen(a.balance))}`).join("、")}` : `${state.accounts.length}口座`}</div></div>
       <div class="card tile"><div class="label">給料日（${esc(D.dayLabelLong(payday))}）までの最低残高</div><div class="value num">${esc(yen(f.min.balance))}</div>
         <div class="sub">${esc(D.dayLabelLong(f.min.date))}・あと${D.diffDays(t, payday)}日</div></div>
-      <div class="card tile"><div class="label">給料日前日の残高見込み</div><div class="value num">${esc(yen((f.days[f.days.length - 2] || f.days[0]).balance))}</div>
-        <div class="sub">${inflightHome ? `着金待ち ${esc(yen(inflightHome))} は含めない場合` : `あと${D.diffDays(t, payday) - 1}日`}</div></div>
+      <div class="card tile"><div class="label">給料日前日の残高見込み</div><div class="value num">${esc(yen(eve(f)))}</div>
+        <div class="sub">${inflightHome ? `着金待ち ${esc(yen(inflightHome))} を含む（入らないと ${esc(yen(eve(fp)))}）` : `あと${D.diffDays(t, payday) - 1}日`}</div></div>
     </section>`;
 
     if (K.needsReminder(state, nowParts())) {
@@ -1454,7 +1457,7 @@
     const home = $("#homeChart");
     if (home && state.accounts.length) {
       const t = today();
-      const f = K.forecast(state, { today: t, end: rangeEnd("payday", t), scenario: "pessimistic" });
+      const f = K.forecast(state, { today: t, end: rangeEnd("payday", t), scenario: "optimistic" });
       C.lineChart(home, {
         dates: f.days.map((d) => d.date),
         series: [{ name: "残高", values: f.days.map((d) => d.balance), cls: "s1" }],
@@ -2057,16 +2060,27 @@
       const tr = state.transfers.find((x) => x.id === b.dataset.id);
       if (!tr) return;
       const to = K.accountById(state, tr.toId);
+      const actualOf = () => {
+        const v = money(($("#arrivedAmount") || {}).value);
+        return Number.isNaN(v) || v <= 0 ? tr.amount : v;
+      };
+      const diffNote = (v) => (v === tr.amount ? "" : `（予定との差 ${v > tr.amount ? "+" : ""}${yen(v - tr.amount)} を記録）`);
       sheetActions = {
-        reflected: () => undoable("着金済みにしました（残高は変更なし）", () => K.completeTransfer(state, tr.id, { reflect: false })),
+        reflected: () => {
+          const v = actualOf();
+          undoable(`着金済みにしました（残高は変更なし）${diffNote(v)}`, () => K.completeTransfer(state, tr.id, { reflect: false, actualAmount: v, today: today() }));
+        },
       };
       openSheet(`${to ? to.name : "入金先"}に${yen(tr.amount)}が着金`, `<div style="display:grid;gap:14px">
         <p class="small" style="margin:0">着金済みにすると、着金待ちの表示と「着金しない前提」の比較が消えます。</p>
+        <label class="field">実際に入った金額（違うときだけ直す）<input class="amount num" id="arrivedAmount" name="arrivedAmount" inputmode="numeric" value="${tr.amount}"></label>
+        <p class="tiny" style="margin:0">予定と違う額が入ったときは、その差を「着金額の差」として記録します（FX口座からの出金ならFXの損益に入ります）。</p>
         <p class="small muted" style="margin:0">今の${esc(to ? to.name : "入金先")}の残高：<b class="num" style="color:var(--text)">${esc(yen(to ? to.balance : 0))}</b></p>
         <div class="sheet-foot" style="flex-wrap:wrap">
           <button type="submit" class="ghost" data-sheet-action="reflected" formnovalidate>残高はもう更新した</button>
-          <button type="submit" class="primary">残高に${esc(yen(tr.amount))}を足す</button></div></div>`, () => {
-        undoable(`着金済みにして${to ? to.name : ""}に${yen(tr.amount)}を足しました`, () => K.completeTransfer(state, tr.id));
+          <button type="submit" class="primary">残高に足す</button></div></div>`, () => {
+        const v = actualOf();
+        undoable(`着金済みにして${to ? to.name : ""}に${yen(v)}を足しました${diffNote(v)}`, () => K.completeTransfer(state, tr.id, { actualAmount: v, today: today() }));
       });
     },
     "tx-edit": (b) => txSheet(state.transactions.find((x) => x.id === b.dataset.id)),
