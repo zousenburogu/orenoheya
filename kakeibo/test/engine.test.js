@@ -202,11 +202,11 @@ test("カテゴリ集計：実績＋予定", () => {
   assert.equal(sum.groups.find((g) => g.categoryId === "cat_bnpl").total, 7000);
 });
 
-test("確定申告アラート：臨時収入が年20万円超", () => {
+test("確定申告アラートは出さない（臨時収入が年20万円を超えても）", () => {
   const s = setup();
   K.addTransaction(s, { accountId: "fx", date: "2026-03-01", amount: 150000, categoryId: K.WINDFALL, label: "FX利益" });
   K.addTransaction(s, { accountId: "fx", date: "2026-08-01", amount: 60000, categoryId: K.WINDFALL, label: "リベート" });
-  assert.ok(K.alerts(s, { today: "2026-09-25" }).some((a) => a.kind === "tax" && a.level === "warning"));
+  assert.ok(!K.alerts(s, { today: "2026-09-25" }).some((a) => a.kind === "tax"));
 });
 
 test("確定の取り消し：予定に戻り、残高も元に戻る", () => {

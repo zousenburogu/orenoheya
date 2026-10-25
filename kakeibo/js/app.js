@@ -1206,7 +1206,7 @@
     `<section class="row between"><h2 style="margin:0">カテゴリ</h2><button class="primary small" data-action="cat-new">＋ 追加</button></section>
     ${["expense", "income"].map((kind) => `<section class="card"><h3>${kind === "expense" ? "支出" : "収入"}</h3><ul class="list">${state.categories
       .filter((c) => c.kind === kind)
-      .map((c) => `<li>${catSwatch(c.id)}<div class="grow">${esc(c.name)}${c.id === K.WINDFALL ? ' <span class="badge">目標計算・確定申告チェックの対象</span>' : ""}<div class="meta">${Number(c.benchmark) ? `比較基準 ${esc(yen(c.benchmark))}/月` : ""}</div></div>
+      .map((c) => `<li>${catSwatch(c.id)}<div class="grow">${esc(c.name)}${c.id === K.WINDFALL ? ' <span class="badge">目標計算の対象</span>' : ""}<div class="meta">${Number(c.benchmark) ? `比較基準 ${esc(yen(c.benchmark))}/月` : ""}</div></div>
         <button class="small ghost" data-action="cat-edit" data-id="${esc(c.id)}">編集</button></li>`)
       .join("")}</ul></section>`).join("")}`;
 
@@ -1273,7 +1273,6 @@
       <label class="field">給料日が休日のとき<select name="paydayAdjust"><option value="prev" ${s.paydayAdjust === "prev" ? "selected" : ""}>前営業日</option><option value="next" ${s.paydayAdjust === "next" ? "selected" : ""}>翌営業日</option><option value="none" ${s.paydayAdjust === "none" ? "selected" : ""}>そのまま</option></select></label></div>
       <label class="field">給与の入金口座<select name="salaryAccountId">${accountOptions(s.salaryAccountId, { includeEmpty: true })}</select></label>
       <label class="field">残高アラートの目安（これを下回る予測で警告）<input name="threshold" inputmode="numeric" value="${esc(s.threshold)}"></label>
-      <label class="field">確定申告チェックの目安（臨時収入の年間合計）<input name="taxThreshold" inputmode="numeric" value="${esc(s.taxThreshold)}"></label>
       <label class="check"><input type="checkbox" name="notify" ${s.notify ? "checked" : ""} ${notifySupported ? "" : "disabled"}> アプリを開いたときに警告を通知する${notifySupported ? "" : "（このブラウザは非対応）"}</label>
       <button class="primary" type="submit">保存</button></form></section>
       <section class="card"><h3>記録のリマインダー</h3>
@@ -2438,7 +2437,6 @@
         paydayAdjust: fd.get("paydayAdjust"),
         salaryAccountId: fd.get("salaryAccountId"),
         threshold: money(fd.get("threshold")) || 0,
-        taxThreshold: money(fd.get("taxThreshold")) || 200000,
         notify,
       });
       if (notify && "Notification" in window && Notification.permission === "default") Notification.requestPermission();

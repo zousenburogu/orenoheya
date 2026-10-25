@@ -998,15 +998,6 @@
     });
     const overdue = state.transactions.filter((t) => t.status === "planned" && t.date < today);
     if (overdue.length) out.push({ level: "warning", kind: "overdue-planned", message: `日付を過ぎた未確定の予定が${overdue.length}件あります` });
-
-    const year = Number(today.slice(0, 4));
-    const windfall = windfallOfYear(state, year);
-    const limit = Number(state.settings.taxThreshold) || 200000;
-    if (windfall > limit) {
-      out.push({ level: "warning", kind: "tax", message: `${year}年の臨時収入が${yen(windfall)}です。給与以外の所得が${yen(limit)}を超えると確定申告が必要になる可能性があります` });
-    } else if (windfall > limit * 0.8) {
-      out.push({ level: "info", kind: "tax", message: `${year}年の臨時収入が${yen(windfall)}です（確定申告の目安 ${yen(limit)} まであと${yen(limit - windfall)}）` });
-    }
     return out;
   };
 
