@@ -2283,21 +2283,30 @@
         state.settings.lastExportOn = today();
         commit();
       };
-      // iPhone は Blob の直接ダウンロードで「WebKitBlobResource エラー」になることがあるので、共有シート（「ファイルに保存」）を先に使う
-      const file = typeof File === "function" ? new File([json], name, { type: "application/json" }) : null;
+      const download = () => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+        a.download = name;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+        done();
+        toast(`${name} を書き出しました`);
+      };
+      // iPhone・iPad は Blob の直接ダウンロードで「WebKitBlobResource エラー」になることがあるので、共有シート（「ファイルに保存」）を使う。
+      // パソコン（Windows の Chrome・Edge など）は共有シートが開いて保存できないことがあるので、ふつうのダウンロードにする
+      const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      const file = isIOS && typeof File === "function" ? new File([json], name, { type: "application/json" }) : null;
       if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
         navigator.share({ files: [file], title: name }).then(done, (err) => {
           if (err && err.name === "AbortError") return;
-          toast("書き出せませんでした。もう一度お試しください");
+          download();
         });
         return;
       }
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
-      a.download = name;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-      done();
+      download();
     },
     sample: () => {
       if (state.accounts.length && !confirm("今のデータをサンプルデータで置き換えますか？")) return;
