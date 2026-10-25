@@ -573,10 +573,11 @@
         <div class="meta">${esc(x.label || "")}${overdue ? ' <span class="badge warn">予定日超過</span>' : ""}</div></div>
         <span class="amt num">${esc(yen(x.amount))}</span>
         <span class="actions"><select data-action="transfer-status" data-id="${esc(x.id)}" aria-label="状態" style="width:auto;padding:4px 8px;font-size:14px">${Object.entries(K.TRANSFER_STATUS).map(([k, v]) => `<option value="${k}" ${k === x.status ? "selected" : ""}>${v}</option>`).join("")}</select>
-        <button class="small ghost danger" data-action="transfer-delete" data-id="${esc(x.id)}" aria-label="削除">×</button></span></li>`;
+        ${K.IN_FLIGHT.includes(x.status) ? `<button class="small primary" data-action="transfer-arrived" data-id="${esc(x.id)}">着金した</button>` : ""}
+        <button class="small ghost danger" data-action="transfer-delete" data-id="${esc(x.id)}" aria-label="間違いとして取り消す">取り消し</button></span></li>`;
     };
     html += `<section class="card"><div class="row between"><h3>振替・出金の状況</h3><button class="small" data-action="go-transfer">＋ 振替</button></div>
-      <p class="tiny">予定 → 申請中 → 着金待ち → 着金済み。状態を変えると口座残高に自動で反映されます。</p>
+      <p class="tiny">予定 → 申請中 → 着金待ち → 着金済み。状態を変えると口座残高に自動で反映されます。お金が届いたら「着金した」、記録の間違いは「取り消し」を押します。</p>
       ${active.length ? `<ul class="list">${active.map(trItem).join("")}</ul>` : `<p class="muted small">進行中の振替はありません</p>`}
       ${done.length ? `<details style="margin-top:8px"><summary>着金済み（最近10件）</summary><ul class="list">${done.map(trItem).join("")}</ul></details>` : ""}</section>`;
     return html;
@@ -2052,7 +2053,14 @@
     "account-edit": (b) => accountSheet(K.accountById(state, b.dataset.id)),
     "account-balance": (b) => balanceSheet(K.accountById(state, b.dataset.id)),
     "transfer-delete": (b) => {
-      if (!confirm("この振替を削除しますか？口座残高への反映も取り消されます。")) return;
+      const tr = state.transfers.find((x) => x.id === b.dataset.id);
+      if (!tr) return;
+      const moves = [];
+      if (!tr.noBalance && tr.fromApplied) moves.push(`${accName(tr.fromId)}に${yen(tr.amount)}が戻ります`);
+      if (!tr.noBalance && tr.toApplied) moves.push(`${accName(tr.toId)}から${yen(tr.amount)}が引かれます`);
+      const effect = moves.length ? moves.join("。") + "。" : "口座の残高は変わりません。";
+      const hint = K.IN_FLIGHT.includes(tr.status) ? "\n\nお金が届いたときは、取り消しではなく「着金した」を押してください。" : "";
+      if (!confirm(`この振替を「間違いの記録」として取り消しますか？\n\n${effect}${hint}`)) return;
       K.removeTransfer(state, b.dataset.id);
       commit();
     },
