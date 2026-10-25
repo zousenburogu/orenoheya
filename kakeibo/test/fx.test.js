@@ -40,14 +40,14 @@ test("第N曜日のルール：毎月の第1金曜に展開し、休日は翌営
 
 test("FXの記録：FX口座の残高が動き、支出・期間の集計には入らず、合計と1日平均を出す", () => {
   const s = setup();
-  K.addFxDay(s, { date: "2026-10-22", pl: 44878 });
-  K.addFxDay(s, { date: "2026-10-23", pl: 7281, rebate: 9048 });
-  K.addFxDay(s, { date: "2026-10-24", pl: -29270, rebate: 1779 });
-  K.addFxDay(s, { date: "2026-10-25", pl: 35626, rebate: 9881, reflected: true });
-  assert.equal(K.accountById(s, "fx").balance, 44878 + 16329 - 27491);
+  K.addFxDay(s, { date: "2026-10-22", pl: 40000 });
+  K.addFxDay(s, { date: "2026-10-23", pl: 7000, rebate: 9000 });
+  K.addFxDay(s, { date: "2026-10-24", pl: -30000, rebate: 2000 });
+  K.addFxDay(s, { date: "2026-10-25", pl: 35000, rebate: 10000, reflected: true });
+  assert.equal(K.accountById(s, "fx").balance, 40000 + 16000 - 28000);
   const f = K.fxSummary(s, { today: TODAY });
-  assert.deepEqual([f.start, f.dayCount, f.total, f.pl, f.rebate, f.average, f.yearTotal], ["2026-10-22", 4, 79223, 58515, 20708, 19806, 79223]);
-  assert.deepEqual(f.days.map((d) => d.total), [44878, 16329, -27491, 45507]);
+  assert.deepEqual([f.start, f.dayCount, f.total, f.pl, f.rebate, f.average, f.yearTotal], ["2026-10-22", 4, 73000, 52000, 21000, 18250, 73000]);
+  assert.deepEqual(f.days.map((d) => d.total), [40000, 16000, -28000, 45000]);
   // 損失は支出のカテゴリ集計に出ない
   assert.equal(K.categorySummary(s, "2026-10-01", "2026-10-31", { today: TODAY }).total, 0);
   // 給料期間の集計（収入）にも入らない
@@ -55,10 +55,10 @@ test("FXの記録：FX口座の残高が動き、支出・期間の集計には�
   // 起点日を変えると日数と平均が変わる
   s.settings.fxStartDate = "2026-10-24";
   const g = K.fxSummary(s, { today: TODAY });
-  assert.deepEqual([g.dayCount, g.total, g.average], [2, 18016, 9008]);
+  assert.deepEqual([g.dayCount, g.total, g.average], [2, 17000, 8500]);
   // その日の記録を消すと残高も戻る（反映済みの分は動かない）
   K.removeFxDay(s, "2026-10-24");
-  assert.equal(K.accountById(s, "fx").balance, 44878 + 16329);
+  assert.equal(K.accountById(s, "fx").balance, 40000 + 16000);
   assert.equal(K.fxAccountId(s), "fx");
 });
 
@@ -70,7 +70,7 @@ test("transfer：着金済みは両方の残高、着金待ちは出金元だけ
   const r = E.apply(s, [
     { action: "transfer", date: "2026-10-22", amount: 50000, from: "テスト銀行", to: "テストFX口座", label: "FX入金" },
     { action: "transfer", date: "2026-10-23", amount: 30000, from: "テスト銀行", to: "テストFX口座", label: "FX入金", reflected: "from" },
-    { action: "transfer", date: "2026-10-27", amount: 85507, from: "テストFX口座", to: "テスト銀行", label: "FX出金", status: "着金待ち" },
+    { action: "transfer", date: "2026-10-27", amount: 60000, from: "テストFX口座", to: "テスト銀行", label: "FX出金", status: "着金待ち" },
     { action: "transfer", date: "2026-10-26", amount: 1000, from: "テストFX口座", to: "テスト銀行", status: "着金待ち", reflected: "from" },
     { action: "transfer", date: "2026-10-24", amount: 7000, from: "テストFX口座", to: "テスト銀行", reflected: "both" },
     { action: "transfer", date: "2026-10-22", amount: 50000, from: "テスト銀行", to: "テストFX口座" },
@@ -83,14 +83,14 @@ test("transfer：着金済みは両方の残高、着金待ちは出金元だけ
   assert.deepEqual(r.count, { account: 0, add: 5, change: 0, delete: 0, skip: 1, fail: 4 });
   // 銀行：−50,000（1行目）。2行目は反映済み。着金待ちはまだ入らない
   assert.equal(K.accountById(s, "bank").balance, 50000);
-  // FX：+50,000 +30,000 −85,507 −0（4行目は反映済み）
-  assert.equal(K.accountById(s, "fx").balance, 200000 + 80000 - 85507);
-  const pend = s.transfers.find((x) => x.amount === 85507);
+  // FX：+50,000 +30,000 −60,000 −0（4行目は反映済み）
+  assert.equal(K.accountById(s, "fx").balance, 200000 + 80000 - 60000);
+  const pend = s.transfers.find((x) => x.amount === 60000);
   assert.equal(pend.status, "pending");
-  assert.equal(K.inFlightTotal(s, ["bank"]), 86507);
+  assert.equal(K.inFlightTotal(s, ["bank"]), 61000);
   // 着金済みにすると銀行に入る
   K.completeTransfer(s, pend.id);
-  assert.equal(K.accountById(s, "bank").balance, 135507);
+  assert.equal(K.accountById(s, "bank").balance, 110000);
   assert.equal(s.transfers.find((x) => x.amount === 7000).noBalance, true);
 });
 
@@ -98,14 +98,14 @@ test("transfer：着金済みは両方の残高、着金待ちは出金元だけ
 
 test("add-recurrence：給料日・第N曜日・日にち・週ごと・振替のルールを作り、同じルールはスキップ、単発の予定が残っていれば知らせる", () => {
   const s = setup();
-  K.addTransaction(s, { accountId: "bank", date: "2026-11-24", amount: -1280, categoryId: "cat_subsc", label: "動画サブスク", status: "planned" });
+  K.addTransaction(s, { accountId: "bank", date: "2026-11-24", amount: -1500, categoryId: "cat_subsc", label: "動画サブスク", status: "planned" });
   const r = E.apply(s, [
-    { action: "add-recurrence", label: "給料テスト", type: "income", amount: 190000, account: "テスト銀行", category: "給与", payday: true, start: "2026-11-01" },
+    { action: "add-recurrence", label: "給料テスト", type: "income", amount: 200000, account: "テスト銀行", category: "給与", payday: true, start: "2026-11-01" },
     { action: "add-recurrence", label: "電気代テスト", type: "expense", amount: 10000, account: "テスト銀行", category: "固定費", nth: 1, weekday: "金", adjust: "翌営業日", start: "2026-11-01" },
-    { action: "add-recurrence", label: "動画サブスク", type: "expense", amount: 1280, account: "テスト銀行", category: "サブスク", day: 24, start: "2026-11-01" },
+    { action: "add-recurrence", label: "動画サブスク", type: "expense", amount: 1500, account: "テスト銀行", category: "サブスク", day: 24, start: "2026-11-01" },
     { action: "add-recurrence", label: "後払いテスト", type: "expense", amount: 3000, category: "返済", days: [27], start: "2026-11-01", end: "2027-03-27" },
     { action: "add-recurrence", label: "週の積立テスト", type: "transfer", amount: 10000, account: "テスト銀行", to: "テストFX口座", weeks: 1, weekday: 1, start: "2026-10-26" },
-    { action: "add-recurrence", label: "給料テスト", type: "income", amount: 190000, account: "テスト銀行", payday: true },
+    { action: "add-recurrence", label: "給料テスト", type: "income", amount: 200000, account: "テスト銀行", payday: true },
     { action: "add-recurrence", label: "日なし", type: "expense", amount: 100 },
     { action: "add-recurrence", label: "第9", type: "expense", amount: 100, nth: 9, weekday: 5 },
     { action: "add-recurrence", label: "曜日不正", type: "expense", amount: 100, weeks: 1, weekday: "月火" },
@@ -114,7 +114,7 @@ test("add-recurrence：給料日・第N曜日・日にち・週ごと・振替�
   assert.deepEqual(r.items.map((i) => i.status), ["ok", "ok", "ok", "ok", "ok", "skip", "fail", "fail", "fail", "fail"]);
   assert.equal(s.recurrences.length, 5);
   const [pay, elec, sub, bnpl, weekly] = s.recurrences;
-  assert.deepEqual([pay.onPayday, pay.amount, pay.categoryId], [true, 190000, "cat_salary"]);
+  assert.deepEqual([pay.onPayday, pay.amount, pay.categoryId], [true, 200000, "cat_salary"]);
   assert.deepEqual([elec.nth, elec.weekday, elec.adjust, elec.amount, elec.categoryId], [1, 5, "next", -10000, "cat_fixed"]);
   assert.deepEqual([sub.days, sub.categoryId], [[24], "cat_subsc"]);
   assert.deepEqual([bnpl.accountId, bnpl.endDate, bnpl.categoryId], ["bank", "2027-03-27", "cat_repay"]);
@@ -136,9 +136,9 @@ test("add-recurrence：給料日・第N曜日・日にち・週ごと・振替�
 test("fx：FX口座に記録し、同じ内容はスキップ、違う内容・未来・0 はエラー", () => {
   const s = setup();
   const r = E.apply(s, [
-    { action: "fx", date: "2026-10-24", pl: -29270, rebate: 1779 },
-    { action: "fx", date: "2026-10-25", pl: "35,626", rebate: 9881, account: "テストFX口座" },
-    { action: "fx", date: "2026-10-24", pl: -29270, rebate: 1779 },
+    { action: "fx", date: "2026-10-24", pl: -30000, rebate: 2000 },
+    { action: "fx", date: "2026-10-25", pl: "35,000", rebate: 10000, account: "テストFX口座" },
+    { action: "fx", date: "2026-10-24", pl: -30000, rebate: 2000 },
     { action: "fx", date: "2026-10-24", pl: 100 },
     { action: "fx", date: "2026-10-26", pl: 100 },
     { action: "fx", date: "2026-10-20", pl: 0, rebate: 0 },
@@ -146,8 +146,8 @@ test("fx：FX口座に記録し、同じ内容はスキップ、違う内容・�
   ], { today: TODAY });
   assert.deepEqual(r.items.map((i) => i.status), ["ok", "ok", "skip", "fail", "fail", "fail", "fail"]);
   assert.equal(r.count.add, 2);
-  assert.equal(K.accountById(s, "fx").balance, -27491 + 45507);
-  assert.deepEqual(K.fxSummary(s, { today: TODAY }).days.map((d) => [d.date, d.pl, d.rebate]), [["2026-10-24", -29270, 1779], ["2026-10-25", 35626, 9881]]);
+  assert.equal(K.accountById(s, "fx").balance, -28000 + 45000);
+  assert.deepEqual(K.fxSummary(s, { today: TODAY }).days.map((d) => [d.date, d.pl, d.rebate]), [["2026-10-24", -30000, 2000], ["2026-10-25", 35000, 10000]]);
 });
 
 /* ---------- 着金額の差・着金待ちのアラート ---------- */
@@ -155,14 +155,14 @@ test("fx：FX口座に記録し、同じ内容はスキップ、違う内容・�
 test("着金した：実際の額が違えば差を入金先に記録し、FX口座からならFXの損益に入る", () => {
   const s = setup();
   s.accounts[1].balance = 100000;
-  const a = K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 85507, date: "2026-10-27", status: "pending", label: "FX出金" });
+  const a = K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 60000, date: "2026-10-27", status: "pending", label: "FX出金" });
   const b = K.addTransfer(s, { fromId: "bank", toId: "fx", amount: 1000, date: "2026-10-27", status: "pending", label: "テスト" });
-  assert.equal(K.accountById(s, "fx").balance, 100000 - 85507 + 0);
-  K.completeTransfer(s, a.id, { actualAmount: 85300, today: "2026-10-27" });
-  assert.equal(K.accountById(s, "bank").balance, 100000 - 1000 + 85300);
+  assert.equal(K.accountById(s, "fx").balance, 100000 - 60000 + 0);
+  K.completeTransfer(s, a.id, { actualAmount: 59800, today: "2026-10-27" });
+  assert.equal(K.accountById(s, "bank").balance, 100000 - 1000 + 59800);
   const diff = s.transactions.find((t) => /着金額の差/.test(t.label));
-  assert.deepEqual([diff.amount, diff.fx, diff.accountId, diff.date], [-207, "pl", "bank", "2026-10-27"]);
-  assert.equal(K.fxSummary(s, { today: "2026-10-27", start: "2026-10-27" }).total, -207);
+  assert.deepEqual([diff.amount, diff.fx, diff.accountId, diff.date], [-200, "pl", "bank", "2026-10-27"]);
+  assert.equal(K.fxSummary(s, { today: "2026-10-27", start: "2026-10-27" }).total, -200);
   // 同じ額なら差は記録しない。FX口座以外からなら fx にしない
   K.completeTransfer(s, b.id, { actualAmount: 1100, today: "2026-10-27" });
   const d2 = s.transactions.filter((t) => /着金額の差/.test(t.label))[1];
@@ -179,7 +179,7 @@ test("アラート：着金待ちは入る前提で判定し、入らないと�
   const s = setup();
   s.accounts[0].balance = 3000;
   s.accounts[1].balance = 50000;
-  K.addTransaction(s, { accountId: "bank", date: "2026-10-27", amount: -3436, categoryId: "cat_repay", label: "後払いテスト", status: "planned" });
+  K.addTransaction(s, { accountId: "bank", date: "2026-10-27", amount: -3500, categoryId: "cat_repay", label: "後払いテスト", status: "planned" });
   K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 50000, date: "2026-10-26", status: "pending", label: "FX出金" });
   const al = K.alerts(s, { today: TODAY });
   assert.ok(!al.some((a) => a.kind === "negative"));

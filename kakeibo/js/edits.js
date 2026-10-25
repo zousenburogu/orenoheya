@@ -5,9 +5,9 @@
        { "action": "change", "target": "名前", "from": { "date": "2026-10-05", "amount": 500 }, "to": { "date": "2026-10-09", "amount": 600, "label": "新しい名前", "category": "カテゴリ名" } },
        { "action": "delete", "target": "名前", "date": "2026-10-05", "amount": 500 },
        { "action": "add-account", "name": "口座名", "includeInTotal": false, "balance": 0, "note": "メモ" },
-       { "action": "transfer", "date": "2026-10-27", "amount": 85507, "from": "Fx口座", "to": "三井住友銀行", "label": "FX出金", "status": "着金待ち", "reflected": "from" },
+       { "action": "transfer", "date": "2026-10-27", "amount": 50000, "from": "FX口座", "to": "銀行", "label": "FX出金", "status": "着金待ち", "reflected": "from" },
        { "action": "add-recurrence", "label": "電気代", "type": "expense", "amount": 10000, "account": "口座名", "category": "固定費", "nth": 1, "weekday": "金", "adjust": "next", "start": "2026-11-01" },
-       { "action": "fx", "date": "2026-10-25", "pl": 35626, "rebate": 9881 } ] }
+       { "action": "fx", "date": "2026-10-25", "pl": 12000, "rebate": 3000 } ] }
    金額の符号は見ない（絶対値で照合し、変更では元の符号を保つ）。edits を上から順に適用する。 */
 (function (root) {
   "use strict";

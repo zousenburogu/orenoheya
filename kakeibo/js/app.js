@@ -859,8 +859,8 @@
     html += `<section class="card"><h3>今日の記録</h3><form class="stack" data-form="fx">
       <div class="grid2"><label class="field">日付<input type="date" name="date" value="${esc(t)}" max="${esc(t)}" required></label>
       <label class="field">FX口座<select name="accountId">${accountOptions(fxId)}</select></label></div>
-      <div class="grid2"><label class="field">MT5の損益（マイナスは「-」）<input class="num" name="pl" inputmode="text" placeholder="例: 35626 / -10611"></label>
-      <label class="field">リベート<input class="num" name="rebate" inputmode="numeric" placeholder="例: 9881"></label></div>
+      <div class="grid2"><label class="field">MT5の損益（マイナスは「-」）<input class="num" name="pl" inputmode="text" placeholder="例: 12000 / -5000"></label>
+      <label class="field">リベート<input class="num" name="rebate" inputmode="numeric" placeholder="例: 3000"></label></div>
       <details><summary>詳細設定</summary><label class="check" style="margin-top:8px"><input type="checkbox" name="reflected"> FX口座の残高はもう更新済み（残高を変えずに記録だけする）</label></details>
       <button class="primary" type="submit">記録する</button></form></section>`;
 
