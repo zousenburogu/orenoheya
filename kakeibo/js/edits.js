@@ -16,7 +16,7 @@
   const isNode = typeof module !== "undefined" && module.exports;
   const D = isNode ? require("./dates.js") : root.KDates;
   const K = isNode ? require("./engine.js") : root.Kakeibo;
-  const I = isNode ? require("./importer.js") : root.KImport;
+  const I = isNode ? require("./matching.js") : root.KMatch;
 
   const isDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && D.fmt(D.parse(v)) === v;
   const absAmount = (v) => {
@@ -42,7 +42,7 @@
   };
   const signedYen = (n) => (n > 0 ? `+${K.yen(n)}` : K.yen(n));
 
-  // 2: 名前が同じ、1: 一方がもう一方を含む（表記ゆれは importer の照合と同じ）、0: 一致しない
+  // 2: 名前が同じ、1: 一方がもう一方を含む（表記ゆれは matching.js の照合）、0: 一致しない
   const nameScore = (target, label) => {
     const a = I.key(target);
     const b = I.key(label);

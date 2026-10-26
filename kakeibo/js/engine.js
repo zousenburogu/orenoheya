@@ -51,12 +51,7 @@
       extraHolidays: [],
       taxThreshold: 200000,
       reminderTime: "21:00",
-      annualIncomeTarget: 4000000,
-      baseMonthlyPay: 180000,
-      annualBonus: 0,
       noSpendDates: [],
-      budget: { start: "", end: "", amount: 0, includeMisc: false },
-      dismissedSetup: [],
     },
   });
 
@@ -81,7 +76,6 @@
     if (!Array.isArray(s.settings.livingAccountIds) || !s.settings.livingAccountIds.length) {
       s.settings.livingAccountIds = s.settings.livingAccountId ? [s.settings.livingAccountId] : [];
     }
-    if (!s.settings.budget) s.settings.budget = { start: "", end: "", amount: 0, includeMisc: false };
     s.recurrences.forEach((r) => {
       if (!Array.isArray(r.doneDates)) r.doneDates = [];
       if (!Array.isArray(r.days)) r.days = [Number(r.days) || 1];
@@ -729,247 +723,6 @@
 
   /* ---------- 給与明細 ---------- */
 
-  const sortedPayslips = (state) => [...state.payslips].sort((a, b) => (a.payDate < b.payDate ? -1 : 1));
-
-  const overtimeRate = (payslips) => {
-    const withOt = payslips.filter((p) => Number(p.overtimeHours) > 0 && Number(p.overtimePay) > 0);
-    if (!withOt.length) return null;
-    const hours = withOt.reduce((s, p) => s + Number(p.overtimeHours), 0);
-    const pay = withOt.reduce((s, p) => s + Number(p.overtimePay), 0);
-    const last = withOt[withOt.length - 1];
-    return {
-      average: Math.round(pay / hours),
-      latest: Math.round(Number(last.overtimePay) / Number(last.overtimeHours)),
-      samples: withOt.length,
-    };
-  };
-
-  // 残業時間から次回の手取りを見込む。控除率は直近の明細と同じと仮定（多めに見積もる側に倒れる）
-  const estimateNextPay = (payslips, hours) => {
-    if (!payslips.length) return null;
-    const sorted = [...payslips].sort((a, b) => (a.payDate < b.payDate ? -1 : 1));
-    const last = sorted[sorted.length - 1];
-    const rate = overtimeRate(sorted);
-    const gross = Number(last.gross) || 0;
-    if (!gross) return null;
-    const baseGross = gross - (Number(last.overtimePay) || 0);
-    const otPay = rate ? Math.round(rate.average * (Number(hours) || 0)) : 0;
-    const estGross = baseGross + otPay;
-    const deductionRate = (Number(last.deductions) || 0) / gross;
-    const estDeductions = Math.round(estGross * deductionRate);
-    return {
-      rate: rate ? rate.average : 0,
-      baseGross,
-      overtimePay: otPay,
-      gross: estGross,
-      deductions: estDeductions,
-      net: estGross - estDeductions,
-      deductionRate,
-      basedOn: last.payDate,
-    };
-  };
-
-  /* ---------- 目標 ---------- */
-
-  const monthsBetween = (a, b) => D.diffDays(a, b) / (365.2425 / 12);
-
-  // 満年齢（誕生日当日に1歳加算）
-  const ageOn = (birthday, date) => {
-    if (!birthday || !date) return null;
-    let age = Number(date.slice(0, 4)) - Number(birthday.slice(0, 4));
-    if (date.slice(5) < birthday.slice(5)) age--;
-    return age;
-  };
-
-  // 「○歳まで」＝ ○歳の誕生日。2/29 生まれは平年だと 2/28
-  const birthdayAtAge = (birthday, age) => (birthday && Number(age) > 0 ? D.addMonths(birthday, 12 * Number(age)) : null);
-
-  // 目標の期日：誕生日と「何歳まで」があればそこから計算、なければ直接指定した日付
-  const goalTargetDate = (goal, settings = {}) =>
-    birthdayAtAge(goal.birthday || settings.birthday, goal.targetAge) || goal.targetDate || null;
-
-  const goalPlan = (state, goal, opts = {}) => {
-    const today = opts.today || D.today();
-    const ids = goal.accountIds && goal.accountIds.length ? goal.accountIds : totalAccountIds(state);
-    const current = sumBalances(state, ids);
-    const target = Math.round(Number(goal.targetAmount) || 0);
-    const remaining = Math.max(0, target - current);
-    const birthday = goal.birthday || state.settings.birthday || "";
-    const targetDate = goalTargetDate(goal, state.settings) || today;
-    // 「いつから」貯め始めるか。過去または未指定なら今日から数える
-    const startDate = goal.startDate && goal.startDate > today ? goal.startDate : today;
-    const months = Math.max(0, monthsBetween(startDate, targetDate));
-    const years = months / 12;
-    const requiredMonthly = months > 0 ? Math.ceil(remaining / months) : remaining;
-    const requiredYearly = years > 0 ? Math.ceil(remaining / years) : remaining;
-
-    // 今後12か月の予測から月あたりの貯金ペースを出す
-    const end = D.addDays(today, 364);
-    const f = forecast(state, { today, start: today, end, scope: ids, scenario: "pessimistic" });
-    const windfall = f.events.filter((e) => e.windfall && ids.includes(e.accountId)).reduce((s, e) => s + e.amount, 0);
-    const change = f.endBalance - f.startBalance - (goal.includeWindfall ? 0 : windfall);
-    const forecastPace = Math.round(change / 12);
-    const manual = goal.manualMonthlyPace !== null && goal.manualMonthlyPace !== undefined && goal.manualMonthlyPace !== "";
-    const pace = manual ? Math.round(Number(goal.manualMonthlyPace)) : forecastPace;
-    const projected = Math.round(current + pace * months);
-
-    return {
-      targetDate, startDate, notStarted: startDate > today,
-      ageNow: ageOn(birthday, today), targetAge: goal.targetAge ? Number(goal.targetAge) : ageOn(birthday, targetDate),
-      current, target, remaining, months, years, requiredMonthly, requiredYearly,
-      forecastPace, pace, paceSource: manual ? "manual" : "forecast",
-      windfallExcluded: goal.includeWindfall ? 0 : windfall,
-      projected,
-      onTrack: remaining === 0 || pace >= requiredMonthly,
-      gapMonthly: Math.max(0, requiredMonthly - pace),
-      progress: target > 0 ? Math.min(1, Math.max(0, current / target)) : 0,
-    };
-  };
-
-  /* ---------- 稼ぐ目安カレンダー ---------- */
-
-  // 平日（土日・祝日・会社の休み以外）
-  const isWorkday = (state, date) => !D.isDayOff(date, state.settings.extraHolidays || []);
-
-  /**
-   * 目標に届くには、平日1日あたりあといくら稼げばいいか（month は "YYYY-MM"）
-   * 不足額（必要な月の貯金 − 今のペース）をその月の平日数で割る。
-   * 給与明細があれば、控除率で額面に戻し、残業1時間あたりの手当で「残業何時間分」かも出す
-   */
-  const earningsCalendar = (state, goal, opts = {}) => {
-    const today = opts.today || D.today();
-    const month = opts.month || today.slice(0, 7);
-    const plan = opts.plan || goalPlan(state, goal, { today });
-    const first = `${month}-01`;
-    const last = D.endOfMonth(first);
-    const days = [];
-    for (let d = first; d <= last; d = D.addDays(d, 1)) {
-      const inPeriod = d >= plan.startDate && d <= plan.targetDate;
-      days.push({ date: d, workday: isWorkday(state, d) && inPeriod, holiday: D.holidayName(d), dayOff: !isWorkday(state, d), past: d < today, today: d === today, inPeriod });
-    }
-    // 1日あたりの目安がぶれないよう、その月の平日すべてで割る（過去の日・期間外の日は表示しないだけ）
-    const workdays = days.filter((x) => !x.dayOff).length;
-    days.forEach((x) => (x.target = x.workday && !x.past));
-    const gap = plan.gapMonthly;
-    const perDayNet = workdays ? Math.ceil(gap / workdays) : 0;
-    const slips = sortedPayslips(state);
-    const last2 = slips[slips.length - 1];
-    const deductionRate = last2 && Number(last2.gross) ? (Number(last2.deductions) || 0) / Number(last2.gross) : null;
-    const perDayGross = deductionRate !== null && deductionRate < 1 ? Math.ceil(perDayNet / (1 - deductionRate)) : null;
-    const rate = overtimeRate(slips);
-    const perDayHours = rate && perDayGross !== null ? Math.ceil((perDayGross / rate.average) * 10) / 10 : null;
-    // 目標に必要な1日あたりの貯金（平日で割った目安。不足がないときの参考）
-    const perDaySaving = workdays ? Math.ceil(plan.requiredMonthly / workdays) : 0;
-    return {
-      month, first, last, days, workdays, gapMonthly: gap, perDayNet, perDayGross, perDayHours, perDaySaving,
-      deductionRate, overtimeRate: rate ? rate.average : null, onTrack: plan.onTrack, plan,
-      prevMonth: D.addMonths(first, -1).slice(0, 7), nextMonth: D.addMonths(first, 1).slice(0, 7),
-      hasPrev: first > `${plan.startDate.slice(0, 7)}-01` && first > `${today.slice(0, 7)}-01`,
-      hasNext: last < plan.targetDate,
-    };
-  };
-
-  /**
-   * 今年の支給額（額面）を月ごとに集める。
-   * 給与明細があればその支給額、なければ給与の入金（手取り）を控除率で額面に戻して推定、
-   * どちらもなければ基本給で仮定する。給料日がまだ来ていない月は含めない
-   */
-  const incomeYearToDate = (state, { today }) => {
-    const st = state.settings;
-    const year = Number(today.slice(0, 4));
-    const base = Math.round(Number(st.baseMonthlyPay) || 0);
-    const slips = sortedPayslips(state);
-    const lastSlip = slips[slips.length - 1];
-    const dr = lastSlip && Number(lastSlip.gross) ? (Number(lastSlip.deductions) || 0) / Number(lastSlip.gross) : null;
-    const toGross = (net) => (dr !== null && dr < 1 ? Math.round(net / (1 - dr)) : net);
-    const months = [];
-    for (let m = 1; m <= 12; m++) {
-      const ym = D.ymd(year, m, 1).slice(0, 7);
-      const payday = nextPayday(st, `${ym}-01`);
-      const inMonth = (d) => String(d || "").slice(0, 7) === ym;
-      const slipsIn = slips.filter((p) => inMonth(p.payDate));
-      const salaryIn = state.transactions.filter((t) => t.status === "actual" && t.categoryId === "cat_salary" && t.amount > 0 && inMonth(t.date));
-      const paid = payday <= today || slipsIn.length > 0 || salaryIn.length > 0;
-      if (!paid) {
-        months.push({ month: ym, paid: false, gross: 0, source: "future" });
-        continue;
-      }
-      if (slipsIn.length) months.push({ month: ym, paid: true, gross: slipsIn.reduce((a, p) => a + (Number(p.gross) || 0), 0), source: "payslip" });
-      else if (salaryIn.length) months.push({ month: ym, paid: true, gross: toGross(salaryIn.reduce((a, t) => a + t.amount, 0)), source: dr !== null ? "deposit" : "deposit-net" });
-      else months.push({ month: ym, paid: true, gross: base, source: "assumed" });
-    }
-    const bonusNet = state.transactions
-      .filter((t) => t.status === "actual" && t.categoryId === "cat_bonus" && t.amount > 0 && t.date.startsWith(String(year)))
-      .reduce((a, t) => a + t.amount, 0);
-    return { year, months, deductionRate: dr, bonusReceived: toGross(bonusNet) };
-  };
-
-  /**
-   * 年収目標の稼ぐ目安（額面ベース）。
-   * 今年：足りない分 ＝ 年収目標 − 今年すでにもらった額 − 残りの給料日の基本給 − まだもらっていないボーナス を、
-   *       今日から年末までの平日数で割る（給料が入るたびに更新される）
-   * 来年以降：（年収目標 − ボーナス）÷ 12 − 基本給 を、その月の平日数で割る
-   * 残業1時間あたりは給与明細から。明細がなければ基本給から推定（基本給 ÷（8時間 × 月平均20.4日）× 1.25）
-   */
-  const incomeCalendar = (state, opts = {}) => {
-    const today = opts.today || D.today();
-    const month = opts.month || today.slice(0, 7);
-    const st = state.settings;
-    const annual = Math.round(Number(st.annualIncomeTarget) || 0);
-    const base = Math.round(Number(st.baseMonthlyPay) || 0);
-    const bonus = Math.round(Number(st.annualBonus) || 0);
-    const first = `${month}-01`;
-    const last = D.endOfMonth(first);
-    const days = [];
-    for (let d = first; d <= last; d = D.addDays(d, 1)) {
-      const off = !isWorkday(state, d);
-      days.push({ date: d, dayOff: off, holiday: D.holidayName(d), past: d < today, today: d === today, target: !off && d >= today });
-    }
-    const workdays = days.filter((x) => !x.dayOff).length;
-    const monthlyTarget = Math.round((annual - bonus) / 12);
-    const thisYear = month.slice(0, 4) === today.slice(0, 4);
-
-    let ytd = null;
-    let extraNeeded;
-    let perDayGross;
-    let remainingWorkdays = 0;
-    let remainingPaychecks = 0;
-    let bonusRemaining = 0;
-    if (thisYear) {
-      ytd = incomeYearToDate(state, { today });
-      ytd.gross = ytd.months.reduce((a, m) => a + m.gross, 0);
-      remainingPaychecks = ytd.months.filter((m) => !m.paid).length;
-      bonusRemaining = Math.max(0, bonus - ytd.bonusReceived);
-      extraNeeded = Math.max(0, annual - ytd.gross - ytd.bonusReceived - base * remainingPaychecks - bonusRemaining);
-      for (let d = today; d <= `${today.slice(0, 4)}-12-31`; d = D.addDays(d, 1)) if (isWorkday(state, d)) remainingWorkdays++;
-      perDayGross = remainingWorkdays ? Math.ceil(extraNeeded / remainingWorkdays) : extraNeeded;
-    } else {
-      extraNeeded = Math.max(0, monthlyTarget - base);
-      perDayGross = workdays ? Math.ceil(extraNeeded / workdays) : 0;
-    }
-
-    const slips = sortedPayslips(state);
-    const rate = overtimeRate(slips);
-    const estimatedRate = base ? Math.round((base / (8 * (245 / 12))) * 1.25) : 0;
-    const hourly = rate ? rate.average : estimatedRate;
-    const perDayHours = hourly ? Math.ceil((perDayGross / hourly) * 10) / 10 : null;
-    const lastSlip = slips[slips.length - 1];
-    const deductionRate = lastSlip && Number(lastSlip.gross) ? (Number(lastSlip.deductions) || 0) / Number(lastSlip.gross) : null;
-    const perDayNet = deductionRate !== null ? Math.floor(perDayGross * (1 - deductionRate)) : null;
-    return {
-      month, first, last, days, workdays, annual, base, bonus, monthlyTarget,
-      thisYear, ytd, remainingPaychecks, remainingWorkdays, bonusRemaining, extraNeeded,
-      extraMonthly: thisYear ? null : extraNeeded,
-      perDayGross, perDayHours, perDayNet, deductionRate,
-      overtimeRate: hourly, rateSource: rate ? "payslip" : "estimate",
-      onTrack: extraNeeded === 0,
-      prevMonth: D.addMonths(first, -1).slice(0, 7), nextMonth: D.addMonths(first, 1).slice(0, 7),
-      hasPrev: first > `${today.slice(0, 7)}-01`, hasNext: true,
-    };
-  };
-
-  /* ---------- カテゴリ別集計 ---------- */
-
   const categorySummary = (state, start, end, opts = {}) => {
     const today = opts.today || D.today();
     const scopeIds = opts.accountIds || null;
@@ -1026,64 +779,6 @@
     return out;
   };
 
-  const removeFxDay = (state, date) => {
-    state.transactions.filter((t) => t.fx && t.date === date).forEach((t) => removeTransaction(state, t.id));
-  };
-
-  // 日ごとの一覧と、起点日から今日までの合計・1日平均（土日も1日と数える）、今年の合計
-  const fxSummary = (state, opts = {}) => {
-    const today = opts.today || D.today();
-    const recs = state.transactions.filter((t) => t.fx && t.status === "actual");
-    const map = new Map();
-    recs.forEach((t) => {
-      if (!map.has(t.date)) map.set(t.date, { date: t.date, pl: 0, rebate: 0, total: 0 });
-      const d = map.get(t.date);
-      d[t.fx === "rebate" ? "rebate" : "pl"] += t.amount;
-      d.total += t.amount;
-    });
-    const days = [...map.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
-    const start = opts.start || state.settings.fxStartDate || (days[0] ? days[0].date : today);
-    const inRange = days.filter((d) => d.date >= start && d.date <= today);
-    const sum = (list, k) => list.reduce((a, d) => a + d[k], 0);
-    const dayCount = start <= today ? D.diffDays(start, today) + 1 : 0;
-    // 平日（月〜金。祝日は平日として数える）だけの日数。FXは日本の祝日も動くため
-    let weekdayCount = 0;
-    for (let d = start; d <= today; d = D.addDays(d, 1)) if (D.dow(d) % 6 !== 0) weekdayCount++;
-    const total = sum(inRange, "total");
-    const year = today.slice(0, 4);
-    const thisYear = days.filter((d) => d.date.startsWith(year));
-    return {
-      start, today, days, dayCount, weekdayCount,
-      pl: sum(inRange, "pl"), rebate: sum(inRange, "rebate"), total,
-      average: dayCount ? Math.round(total / dayCount) : 0,
-      weekdayAverage: weekdayCount ? Math.round(total / weekdayCount) : 0,
-      yearTotal: sum(thisYear, "total"), year: Number(year),
-    };
-  };
-
-  // 月のカレンダー用：その月の日ごとの利益（損益＋リベート）と、月の合計・記録した日数
-  const fxMonth = (state, month) => {
-    const byDate = {};
-    state.transactions.forEach((t) => {
-      if (!t.fx || t.status !== "actual" || !t.date.startsWith(month)) return;
-      const d = byDate[t.date] || (byDate[t.date] = { date: t.date, pl: 0, rebate: 0, total: 0 });
-      d[t.fx === "rebate" ? "rebate" : "pl"] += t.amount;
-      d.total += t.amount;
-    });
-    const days = Object.values(byDate);
-    return {
-      month, byDate,
-      total: days.reduce((a, d) => a + d.total, 0),
-      pl: days.reduce((a, d) => a + d.pl, 0),
-      rebate: days.reduce((a, d) => a + d.rebate, 0),
-      recordDays: days.length,
-      plusDays: days.filter((d) => d.total > 0).length,
-      minusDays: days.filter((d) => d.total < 0).length,
-    };
-  };
-
-  /* ---------- アラート ---------- */
-
   const windfallOfYear = (state, year) =>
     state.transactions
       .filter((t) => t.categoryId === WINDFALL && t.amount > 0 && t.date.startsWith(String(year)))
@@ -1139,8 +834,7 @@
   // その日に何か記録したか（その日に入力した取引・その日付の実績・「今日は使っていない」）
   const recordedOn = (state, date) =>
     (state.settings.noSpendDates || []).includes(date) ||
-    state.transactions.some((t) => t.createdOn === date || (t.status === "actual" && t.date === date)) ||
-    state.payslips.some((p) => p.createdOn === date);
+    state.transactions.some((t) => t.createdOn === date || (t.status === "actual" && t.date === date));
 
   // リマインダー時刻（"21:00"）を過ぎていて、今日まだ何も記録していなければ true
   const needsReminder = (state, { date, time }) => {
@@ -1166,9 +860,8 @@
     overrideOccurrence, skipOccurrence,
     addTransfer, updateTransfer, removeTransfer, setTransferStatus, completeTransfer, inFlightTotal,
     expandRecurrence, isWeekly, nextPayday, paydayOfMonth, collectEvents, forecast, hasInFlightInScope, resolveScope,
-    sortedPayslips, overtimeRate, estimateNextPay,
-    ageOn, birthdayAtAge, goalTargetDate, goalPlan, earningsCalendar, incomeCalendar, incomeYearToDate, isWorkday, categorySummary, windfallOfYear, alerts,
-    FX_LABEL, fxAccountId, addFxDay, removeFxDay, fxSummary, fxMonth, isNthWeekday, nthWeekdayOfMonth,
+    categorySummary, windfallOfYear, alerts,
+    FX_LABEL, fxAccountId, addFxDay, isNthWeekday, nthWeekdayOfMonth,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

@@ -163,33 +163,6 @@ test("What-if：仮の支出は反映されるが保存されない", () => {
   assert.equal(s.transactions.length, 0);
 });
 
-test("給与：残業の時給換算と次回見込み", () => {
-  const slips = [
-    { payDate: "2026-08-25", gross: 300000, deductions: 60000, overtimeHours: 20, overtimePay: 40000 },
-    { payDate: "2026-09-25", gross: 320000, deductions: 64000, overtimeHours: 30, overtimePay: 60000 },
-  ];
-  assert.deepEqual(K.overtimeRate(slips), { average: 2000, latest: 2000, samples: 2 });
-  const est = K.estimateNextPay(slips, 10);
-  assert.equal(est.baseGross, 260000);
-  assert.equal(est.gross, 280000);
-  assert.equal(est.deductions, 56000);
-  assert.equal(est.net, 224000);
-});
-
-test("目標：必要な月間貯金額と予測ペース（臨時収入の除外）", () => {
-  const s = setup();
-  s.recurrences.push({ id: "sav", label: "給料", amount: 100000, days: [25], accountId: "bank", categoryId: "cat_salary", adjust: "none", doneDates: [] });
-  s.transactions.push({ id: "fxp", accountId: "fx", date: "2026-12-01", amount: 120000, categoryId: K.WINDFALL, status: "planned", label: "FX利益" });
-  const goal = { targetAmount: 8000000, targetDate: "2030-09-25", includeWindfall: false, accountIds: [] };
-  const p = K.goalPlan(s, goal, { today: "2026-09-26" });
-  assert.equal(p.current, 170000);
-  assert.equal(p.windfallExcluded, 120000);
-  assert.equal(p.forecastPace, 100000);
-  assert.equal(p.onTrack, false);
-  const p2 = K.goalPlan(s, Object.assign({}, goal, { includeWindfall: true }), { today: "2026-09-26" });
-  assert.equal(p2.forecastPace, 110000);
-});
-
 test("カテゴリ集計：実績＋予定", () => {
   const s = setup();
   K.addTransaction(s, { accountId: "bank", date: "2026-09-10", amount: -5000, categoryId: "cat_bnpl", label: "d払い" });
@@ -292,28 +265,6 @@ test("金額欄の計算式", () => {
   assert.equal(K.isFormula("-500"), false);
 });
 
-test("目標：誕生日と何歳まで・いつからで期日と必要額を計算", () => {
-  const s = setup();
-  s.settings.birthday = "2000-05-12";
-  assert.equal(K.ageOn("2000-05-12", "2026-09-30"), 26);
-  assert.equal(K.ageOn("2000-05-12", "2030-05-11"), 29);
-  assert.equal(K.ageOn("2000-05-12", "2030-05-12"), 30);
-  assert.equal(K.birthdayAtAge("2000-02-29", 30), "2030-02-28");
-  const goal = { targetAmount: 8000000, targetAge: 30, startDate: "", accountIds: [] };
-  const p = K.goalPlan(s, goal, { today: "2026-09-30" });
-  assert.equal(p.targetDate, "2030-05-12");
-  assert.equal(p.startDate, "2026-09-30");
-  assert.equal(p.ageNow, 26);
-  assert.equal(p.targetAge, 30);
-  // 貯め始めを先にすると期間が短くなり、月の必要額が増える
-  const later = K.goalPlan(s, Object.assign({}, goal, { startDate: "2027-04-01" }), { today: "2026-09-30" });
-  assert.equal(later.notStarted, true);
-  assert.ok(later.months < p.months);
-  assert.ok(later.requiredMonthly > p.requiredMonthly);
-  // 年齢指定がなければ日付指定を使う（従来どおり）
-  assert.equal(K.goalTargetDate({ targetDate: "2031-01-01" }, s.settings), "2031-01-01");
-});
-
 test("実績と見込みの二重計上をしない：今日の生活費・今月の雑費枠", () => {
   const s = setup();
   Object.assign(s.settings, { livingAccountId: "life", weekdayCost: 1000, holidayCost: 3000, miscMonthly: 10000, includeTodayLiving: true });
@@ -373,89 +324,6 @@ test("着金したら着金待ちの比較は出なくなる（残高更新済�
   assert.equal(K.hasInFlightInScope(s2, "total"), false);
 });
 
-test("稼ぐ目安カレンダー：不足額を平日数で割り、額面・残業時間に換算", () => {
-  const s = setup();
-  s.payslips.push({ payDate: "2026-09-25", gross: 300000, deductions: 60000, net: 240000, overtimeHours: 20, overtimePay: 50000 });
-  const goal = { targetAmount: 8000000, targetDate: "2030-05-12", accountIds: [], manualMonthlyPace: 100000 };
-  const plan = K.goalPlan(s, goal, { today: "2026-09-30" });
-  const cal = K.earningsCalendar(s, goal, { today: "2026-09-30", month: "2026-10", plan });
-  // 2026年10月の平日：31日 − 土日9日 − スポーツの日(10/12) = 21日
-  assert.equal(cal.workdays, 21);
-  assert.equal(cal.gapMonthly, plan.gapMonthly);
-  assert.equal(cal.perDayNet, Math.ceil(plan.gapMonthly / 21));
-  assert.equal(cal.perDayGross, Math.ceil(cal.perDayNet / 0.8)); // 控除率20%
-  assert.equal(cal.overtimeRate, 2500);
-  assert.equal(cal.perDayHours, Math.ceil((cal.perDayGross / 2500) * 10) / 10);
-  assert.equal(cal.days.find((d) => d.date === "2026-10-12").workday, false);
-  assert.equal(cal.hasPrev, true); // 10月からは今月（9月）に戻れる
-  assert.equal(cal.hasNext, true);
-  assert.equal(K.earningsCalendar(s, goal, { today: "2026-09-30", month: "2026-09", plan }).hasPrev, false);
-  // 給与明細がなければ額面・時間は出さない
-  const s2 = setup();
-  const cal2 = K.earningsCalendar(s2, goal, { today: "2026-09-30", month: "2026-10" });
-  assert.equal(cal2.perDayGross, null);
-  assert.equal(cal2.perDayHours, null);
-  // 期日より後の平日は数えない
-  const cal3 = K.earningsCalendar(s, goal, { today: "2026-09-30", month: "2030-05" });
-  assert.equal(cal3.days.find((d) => d.date === "2030-05-13").workday, false);
-  assert.equal(cal3.hasNext, false);
-});
-
-test("稼ぐ目安カレンダー：今月は月の平日すべてで割る（残り1日に不足を詰め込まない）", () => {
-  const s = setup();
-  const goal = { targetAmount: 8000000, targetDate: "2030-05-12", startDate: "2026-09-30", accountIds: [], manualMonthlyPace: 100000 };
-  const cal = K.earningsCalendar(s, goal, { today: "2026-09-30", month: "2026-09" });
-  // 2026年9月の平日：30日 − 土日8日 − 祝日3日(21,22,23) = 19日
-  assert.equal(cal.workdays, 19);
-  assert.equal(cal.perDayNet, Math.ceil(cal.gapMonthly / 19));
-  assert.deepEqual(cal.days.filter((d) => d.target).map((d) => d.date), ["2026-09-30"]);
-});
-
-test("年収目標の稼ぐ目安（来年以降の月）：ボーナスを差し引いて月の平日で割る", () => {
-  const s = setup();
-  Object.assign(s.settings, { annualIncomeTarget: 4000000, baseMonthlyPay: 180000, annualBonus: 400000, payday: 25 });
-  const cal = K.incomeCalendar(s, { today: "2026-09-30", month: "2027-02" });
-  assert.equal(cal.thisYear, false);
-  // (400万 − 40万) ÷ 12 = 30万 − 基本給18万 = 月12万。2027年2月の平日：28 − 土日8 − 祝日2(11,23) = 18日
-  assert.equal(cal.extraMonthly, 120000);
-  assert.equal(cal.workdays, 18);
-  assert.equal(cal.perDayGross, Math.ceil(120000 / 18));
-  // 明細がないときは基本給から残業単価を推定：180000 ÷ (8 × 20.4166…) × 1.25 ≒ 1,378
-  assert.equal(cal.rateSource, "estimate");
-  assert.equal(cal.overtimeRate, 1378);
-});
-
-test("年収目標の稼ぐ目安（今年）：もらった給料・残りの基本給・未受取ボーナスを反映", () => {
-  const s = setup();
-  Object.assign(s.settings, { annualIncomeTarget: 4000000, baseMonthlyPay: 180000, annualBonus: 400000, payday: 25, paydayAdjust: "none" });
-  // 8月・9月は明細あり、7月は入金（手取り）だけ、1〜6月は記録なし（基本給で仮定）
-  s.payslips.push({ payDate: "2026-08-25", gross: 250000, deductions: 50000, overtimeHours: 20, overtimePay: 40000 });
-  s.payslips.push({ payDate: "2026-09-25", gross: 270000, deductions: 54000, overtimeHours: 30, overtimePay: 60000 });
-  K.addTransaction(s, { accountId: "bank", date: "2026-07-25", amount: 200000, categoryId: "cat_salary", label: "給与" });
-  K.addTransaction(s, { accountId: "bank", date: "2026-07-10", amount: 240000, categoryId: "cat_bonus", label: "夏のボーナス" });
-  const ytd = K.incomeYearToDate(s, { today: "2026-09-30" });
-  const src = Object.fromEntries(ytd.months.map((m) => [m.month, m.source]));
-  assert.equal(src["2026-01"], "assumed");
-  assert.equal(src["2026-07"], "deposit");
-  assert.equal(src["2026-08"], "payslip");
-  assert.equal(src["2026-10"], "future");
-  assert.equal(ytd.deductionRate, 0.2);
-  assert.equal(ytd.months.find((m) => m.month === "2026-07").gross, 250000); // 20万 ÷ 0.8
-  assert.equal(ytd.bonusReceived, 300000); // 24万 ÷ 0.8
-  const cal = K.incomeCalendar(s, { today: "2026-09-30", month: "2026-10" });
-  const ytdGross = 180000 * 6 + 250000 + 250000 + 270000; // 1,850,000
-  assert.equal(cal.ytd.gross, ytdGross);
-  assert.equal(cal.remainingPaychecks, 3);
-  assert.equal(cal.bonusRemaining, 100000);
-  assert.equal(cal.extraNeeded, 4000000 - ytdGross - 300000 - 180000 * 3 - 100000); // 1,210,000
-  // 今日(9/30)から年末までの平日：9月1 + 10月21 + 11月19 + 12月23(31日−土日8) = 64
-  assert.equal(cal.remainingWorkdays, 64);
-  assert.equal(cal.perDayGross, Math.ceil(1210000 / 64));
-  assert.equal(cal.rateSource, "payslip");
-  // 給料が増えると1日あたりが下がる
-  s.payslips.find((p) => p.payDate === "2026-09-25").gross = 370000;
-  assert.ok(K.incomeCalendar(s, { today: "2026-09-30", month: "2026-10" }).perDayGross < cal.perDayGross);
-});
 test("生活費を複数口座から払う：残高がなくなったら次の口座、全部なくなったら警告", () => {
   const s = setup(); // bank 100,000 / life 20,000 / paypay 5,000(合計外) / fx 50,000
   K.setLivingAccounts(s, ["paypay", "life"]);

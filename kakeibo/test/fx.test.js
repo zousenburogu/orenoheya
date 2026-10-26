@@ -2,7 +2,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const K = require("../js/engine.js");
-const P = require("../js/periods.js");
 const E = require("../js/edits.js");
 
 const TODAY = "2026-10-25"; // 日曜
@@ -38,27 +37,24 @@ test("第N曜日のルール：毎月の第1金曜に展開し、休日は翌営
 
 /* ---------- FXの記録 ---------- */
 
-test("FXの記録：FX口座の残高が動き、支出・期間の集計には入らず、合計と1日平均を出す", () => {
+// 日ごとの［日付, 損益, リベート］（FXの取引から集計）
+const fxDays = (s, from = "0000-00-00") => {
+  const map = {};
+  s.transactions.filter((t) => t.fx && t.status === "actual" && t.date >= from).forEach((t) => {
+    const d = map[t.date] || (map[t.date] = [t.date, 0, 0]);
+    d[t.fx === "rebate" ? 2 : 1] += t.amount;
+  });
+  return Object.values(map).sort((a, b) => (a[0] < b[0] ? -1 : 1));
+};
+
+test("FXの記録：FX口座の残高が動き、支出のカテゴリ集計には入らない（反映済みの分は動かない）", () => {
   const s = setup();
   K.addFxDay(s, { date: "2026-10-22", pl: 40000 });
   K.addFxDay(s, { date: "2026-10-23", pl: 7000, rebate: 9000 });
   K.addFxDay(s, { date: "2026-10-24", pl: -30000, rebate: 2000 });
   K.addFxDay(s, { date: "2026-10-25", pl: 35000, rebate: 10000, reflected: true });
   assert.equal(K.accountById(s, "fx").balance, 40000 + 16000 - 28000);
-  const f = K.fxSummary(s, { today: TODAY });
-  assert.deepEqual([f.start, f.dayCount, f.total, f.pl, f.rebate, f.average, f.yearTotal], ["2026-10-22", 4, 73000, 52000, 21000, 18250, 73000]);
-  assert.deepEqual(f.days.map((d) => d.total), [40000, 16000, -28000, 45000]);
-  // 損失は支出のカテゴリ集計に出ない
   assert.equal(K.categorySummary(s, "2026-10-01", "2026-10-31", { today: TODAY }).total, 0);
-  // 給料期間の集計（収入）にも入らない
-  assert.ok(!P.periodItems(s, "2026-10-01", "2026-10-31").some((i) => /FX/.test(i.label)));
-  // 起点日を変えると日数と平均が変わる
-  s.settings.fxStartDate = "2026-10-24";
-  const g = K.fxSummary(s, { today: TODAY });
-  assert.deepEqual([g.dayCount, g.total, g.average], [2, 17000, 8500]);
-  // その日の記録を消すと残高も戻る（反映済みの分は動かない）
-  K.removeFxDay(s, "2026-10-24");
-  assert.equal(K.accountById(s, "fx").balance, 40000 + 16000);
   assert.equal(K.fxAccountId(s), "fx");
 });
 
@@ -147,7 +143,7 @@ test("fx：FX口座に記録し、同じ内容はスキップ、違う内容・�
   assert.deepEqual(r.items.map((i) => i.status), ["ok", "ok", "skip", "fail", "fail", "fail", "fail"]);
   assert.equal(r.count.add, 2);
   assert.equal(K.accountById(s, "fx").balance, -28000 + 45000);
-  assert.deepEqual(K.fxSummary(s, { today: TODAY }).days.map((d) => [d.date, d.pl, d.rebate]), [["2026-10-24", -30000, 2000], ["2026-10-25", 35000, 10000]]);
+  assert.deepEqual(fxDays(s), [["2026-10-24", -30000, 2000], ["2026-10-25", 35000, 10000]]);
 });
 
 /* ---------- 着金額の差・着金待ちのアラート ---------- */
@@ -162,7 +158,7 @@ test("着金した：実際の額が違えば差を入金先に記録し、FX口
   assert.equal(K.accountById(s, "bank").balance, 100000 - 1000 + 59800);
   const diff = s.transactions.find((t) => /着金額の差/.test(t.label));
   assert.deepEqual([diff.amount, diff.fx, diff.accountId, diff.date], [-200, "pl", "bank", "2026-10-27"]);
-  assert.equal(K.fxSummary(s, { today: "2026-10-27", start: "2026-10-27" }).total, -200);
+  assert.equal(fxDays(s, "2026-10-27").reduce((a, d) => a + d[1] + d[2], 0), -200);
   // 同じ額なら差は記録しない。FX口座以外からなら fx にしない
   K.completeTransfer(s, b.id, { actualAmount: 1100, today: "2026-10-27" });
   const d2 = s.transactions.filter((t) => /着金額の差/.test(t.label))[1];
@@ -200,38 +196,3 @@ test("アラート：着金待ちは入る前提で判定し、着金予定日�
 
 /* ---------- FXの利益カレンダー（月ごと） ---------- */
 
-test("FXの月カレンダー：その月の日ごとの利益（損益＋リベート）と月の合計・プラス／マイナスの日数", () => {
-  const s = setup();
-  K.addFxDay(s, { date: "2026-10-23", pl: 7000, rebate: 9000, accountId: "fx" });
-  K.addFxDay(s, { date: "2026-10-24", pl: -29000, rebate: 1000, accountId: "fx" });
-  K.addFxDay(s, { date: "2026-11-02", pl: 3000, accountId: "fx" });
-  const m = K.fxMonth(s, "2026-10");
-  assert.deepEqual(Object.keys(m.byDate).sort(), ["2026-10-23", "2026-10-24"]);
-  assert.deepEqual(m.byDate["2026-10-23"], { date: "2026-10-23", pl: 7000, rebate: 9000, total: 16000 });
-  assert.equal(m.byDate["2026-10-24"].total, -28000);
-  assert.equal(m.total, -12000);
-  assert.equal(m.rebate, 10000);
-  assert.equal(m.recordDays, 2);
-  assert.equal(m.plusDays, 1);
-  assert.equal(m.minusDays, 1);
-  const n = K.fxMonth(s, "2026-11");
-  assert.equal(n.total, 3000);
-  assert.equal(K.fxMonth(s, "2026-12").recordDays, 0);
-});
-
-test("FXの平日の1日平均：土日を除いた日数で割る（祝日は平日扱い）", () => {
-  const s = setup();
-  K.addFxDay(s, { date: "2026-10-22", pl: 40000 }); // 木
-  K.addFxDay(s, { date: "2026-10-23", pl: 7000, rebate: 9000 }); // 金
-  K.addFxDay(s, { date: "2026-10-24", pl: -30000, rebate: 2000 }); // 土
-  K.addFxDay(s, { date: "2026-10-25", pl: 35000, rebate: 10000, reflected: true }); // 日
-  const f = K.fxSummary(s, { today: TODAY });
-  assert.equal(f.dayCount, 4);
-  assert.equal(f.weekdayCount, 2);
-  assert.equal(f.weekdayAverage, 36500); // 73,000 ÷ 2
-  assert.equal(f.average, 18250);
-  // 月曜の祝日（2026-10-12 スポーツの日）も平日として数える。10/12(月)〜10/18(日) は5日
-  const h = K.fxSummary(s, { today: "2026-10-18", start: "2026-10-12" });
-  assert.equal(h.weekdayCount, 5);
-  assert.equal(h.weekdayAverage, 0);
-});

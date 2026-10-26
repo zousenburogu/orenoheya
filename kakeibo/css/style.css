@@ -376,11 +376,7 @@ nav.tabs button.add svg { width: 30px; height: 30px; }
 @media (max-width: 480px) {
   .bar-row { grid-template-columns: 72px 1fr auto; }
   .bar-detail { padding-left: 8px; }
-}
-
-/* メーター */
-.meter { height: 10px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
-.meter > div { height: 100%; background: var(--s1); border-radius: 999px; }
+}/* メーター */
 
 /* テーブル */
 .table-wrap { overflow-x: auto; }
@@ -471,85 +467,7 @@ label.field { position: relative; }
   border-bottom: 1px solid var(--border);
   font-size: 14px;
 }
-/* 稼ぐ目安カレンダー */
-.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
-.cal-head { text-align: center; font-size: 12px; color: var(--text-3); padding: 2px 0; }
-.cal-cell {
-  min-height: 58px;
-  border-radius: 8px;
-  padding: 4px 3px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  min-width: 0;
-  overflow: hidden;
-}
-.cal-cell.work { background: var(--info-bg); }
-.cal-cell.off { background: var(--surface-2); color: var(--text-3); }
-.cal-cell.blank { background: none; }
-.cal-cell.past { opacity: 0.45; }
-.cal-cell.today { outline: 2px solid var(--accent); outline-offset: -2px; }
-.cal-day { font-size: 12px; color: var(--text-2); }
-.cal-amt { font-size: 12px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
-.cal-sub { font-size: 10px; color: var(--text-2); max-width: 100%; }
-@media (min-width: 560px) {
-  .cal-cell { min-height: 70px; }
-  .cal-amt { font-size: 14px; }
-  .cal-sub { font-size: 11px; }
-}
-/* 積み上げ棒グラフ */
-.chart .bar-seg.s1 { fill: var(--s1); }
-.chart .bar-seg.s2 { fill: var(--s2); }
-.chart .bar-seg.s3 { fill: var(--s3); }
-.chart .bar-seg.s4 { fill: var(--s4); }
-.chart .bar-group { cursor: pointer; transition: opacity 0.15s; }
-.chart .bar-group.dim { opacity: 0.45; }
-.chart .bar-group:focus { outline: none; }
-.chart .footer-label { fill: var(--text) !important; font-weight: 600; }
-.tooltip .t-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
-.t-swatch.s1, .legend .sw.s1 { background: var(--s1); }
-.t-swatch.s2, .legend .sw.s2 { background: var(--s2); }
-.t-swatch.s3, .legend .sw.s3 { background: var(--s3); }
-.t-swatch.s4, .legend .sw.s4 { background: var(--s4); }
-.legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 
-/* 給料期間のカレンダー */
-.cal-cell.payday { box-shadow: inset 3px 0 0 var(--accent); }
-.cal-marks { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; }
-.mark { font-size: 10px; line-height: 14px; min-width: 14px; height: 14px; border-radius: 7px; text-align: center; font-weight: 700; color: #fff; padding: 0 2px; }
-.mark.in { background: var(--s1); }
-.mark.out { background: var(--s2); }
-.mark.other { background: var(--surface); color: var(--text-2); border: 1px dashed var(--text-2); border-radius: 3px; line-height: 12px; font-weight: 600; }
-.cal-pay { font-size: 9px; color: var(--accent); font-weight: 700; }
-
-/* FXの利益カレンダー */
-.cal-cell.fx-plus { background: color-mix(in srgb, var(--good) 16%, var(--surface)); }
-.cal-cell.fx-minus { background: var(--critical-bg); }
-.cal-cell.fx-plus .fx-amt { color: var(--good-ink); }
-.cal-cell.fx-minus .fx-amt { color: var(--critical); }
-.cal-amt.fx-amt { white-space: nowrap; }
-.fx-full, .fx-wide { display: none; }
-.legend .sw.fx-plus-sw { background: color-mix(in srgb, var(--good) 16%, var(--surface)); border: 1px solid var(--good); }
-.legend .sw.fx-minus-sw { background: var(--critical-bg); border: 1px solid var(--critical); }
-@media (min-width: 560px) {
-  .fx-short { display: none; }
-  .fx-full { display: inline; }
-  .fx-wide { display: block; }
-}
-.setup-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  margin-bottom: 14px;
-  background: var(--info-bg);
-  border: 1px solid var(--border);
-}
-.setup-bar .icon { width: 20px; height: 20px; flex: none; color: var(--accent); }
-.setup-bar.required { background: var(--warning-bg); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
-.setup-bar.required .icon { color: #b07a00; }
 .field-error { display: block; font-size: 13px; color: var(--critical); margin-top: 4px; font-weight: 600; }
 .field-error[hidden] { display: none; }
 [hidden] { display: none !important; }
