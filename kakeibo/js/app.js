@@ -845,6 +845,39 @@
 
   const plusYen = (n) => (n > 0 ? `+${yen(n)}` : yen(n));
 
+  // カレンダーのマスに入れる短い金額（スマホ幅では1万以上を「+4.5万」のように縮める）
+  const fxSign = (n) => (n > 0 ? "+" : n < 0 ? "−" : "");
+  const fxShort = (n) => {
+    const a = Math.abs(Math.round(n));
+    return a >= 10000 ? `${fxSign(n)}${(Math.round(a / 1000) / 10).toLocaleString("ja-JP")}万` : `${fxSign(n)}${a.toLocaleString("ja-JP")}`;
+  };
+
+  // FXの利益カレンダー：記録した日に利益（損益＋リベート）を出し、プラスは緑・マイナスは赤のマスにする
+  const viewFxCalendar = (t) => {
+    const thisMonth = t.slice(0, 7);
+    const ym = ui.fxMonth && ui.fxMonth <= thisMonth ? ui.fxMonth : thisMonth;
+    const fm = K.fxMonth(state, ym);
+    const first = `${ym}-01`;
+    const last = D.endOfMonth(first);
+    const days = [];
+    for (let d = first; d <= last; d = D.addDays(d, 1)) {
+      days.push({ date: d, dayOff: D.isDayOff(d, state.settings.extraHolidays || []), holiday: D.holidayName(d), past: false, today: d === t });
+    }
+    const cal = { month: ym, first, days, prevMonth: D.addMonths(first, -1).slice(0, 7), nextMonth: D.addMonths(first, 1).slice(0, 7), hasPrev: true, hasNext: ym < thisMonth };
+    const grid = calendarGrid(cal, (d) => {
+      const r = fm.byDate[d.date];
+      if (!r) return { html: "", label: "" };
+      return {
+        html: `<span class="cal-amt num fx-amt"><span class="fx-short">${esc(fxShort(r.total))}</span><span class="fx-full">${esc(fxSign(r.total) + short(Math.abs(r.total)))}</span></span>${r.rebate ? `<span class="cal-sub num fx-wide">リ ${esc(short(r.rebate))}</span>` : ""}`,
+        label: `利益 ${plusYen(r.total)}（損益 ${plusYen(r.pl)}・リベート ${yen(r.rebate)}）`,
+        cls: r.total > 0 ? "fx-plus" : r.total < 0 ? "fx-minus" : "",
+      };
+    }, "FXの利益");
+    return `<section class="card"><h3>カレンダー</h3>${grid}
+      <p class="small" style="margin:10px 0 0">${Number(ym.slice(5))}月の合計 <b class="num ${fm.total > 0 ? "pos" : ""}">${esc(plusYen(fm.total))}</b>（記録 ${fm.recordDays}日・プラス ${fm.plusDays}日・マイナス ${fm.minusDays}日）</p>
+      <div class="legend" style="margin-top:6px"><span><i class="sw fx-plus-sw"></i>プラスの日</span><span><i class="sw fx-minus-sw"></i>マイナスの日</span><span>金額はリベート込み</span></div></section>`;
+  };
+
   const viewFx = () => {
     const t = today();
     const fxId = K.fxAccountId(state);
@@ -857,6 +890,8 @@
         <div class="tile"><div class="label">${f.year}年の合計</div><div class="value num">${esc(plusYen(f.yearTotal))}</div><div class="sub">給与以外の所得の目安は年20万円</div></div>
       </div>
       <p class="tiny" style="margin:8px 0 0">利益 ＝ MT5の損益（マイナス残高の補てんを含む）＋ リベート。FX口座への入金・出金は「振替」で記録するので、ここには入りません。</p></section>`;
+
+    html += viewFxCalendar(t);
 
     html += `<section class="card"><h3>今日の記録</h3><form class="stack" data-form="fx">
       <div class="grid2"><label class="field">日付<input type="date" name="date" value="${esc(t)}" max="${esc(t)}" required></label>
@@ -2204,6 +2239,7 @@
     },
     "cal-month": (b) => {
       if (ui.sub === "periods") ui.perMonth = b.dataset.key;
+      else if (ui.sub === "fx") ui.fxMonth = b.dataset.key;
       else ui.calMonth = b.dataset.key;
       render();
     },

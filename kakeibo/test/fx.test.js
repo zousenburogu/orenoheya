@@ -197,3 +197,24 @@ test("アラート：着金待ちは入る前提で判定し、着金予定日�
   // 着金予定日を過ぎると「未着金」も出る
   assert.ok(K.alerts(s, { today: "2026-10-28" }).some((a) => a.kind === "overdue-transfer"));
 });
+
+/* ---------- FXの利益カレンダー（月ごと） ---------- */
+
+test("FXの月カレンダー：その月の日ごとの利益（損益＋リベート）と月の合計・プラス／マイナスの日数", () => {
+  const s = setup();
+  K.addFxDay(s, { date: "2026-10-23", pl: 7000, rebate: 9000, accountId: "fx" });
+  K.addFxDay(s, { date: "2026-10-24", pl: -29000, rebate: 1000, accountId: "fx" });
+  K.addFxDay(s, { date: "2026-11-02", pl: 3000, accountId: "fx" });
+  const m = K.fxMonth(s, "2026-10");
+  assert.deepEqual(Object.keys(m.byDate).sort(), ["2026-10-23", "2026-10-24"]);
+  assert.deepEqual(m.byDate["2026-10-23"], { date: "2026-10-23", pl: 7000, rebate: 9000, total: 16000 });
+  assert.equal(m.byDate["2026-10-24"].total, -28000);
+  assert.equal(m.total, -12000);
+  assert.equal(m.rebate, 10000);
+  assert.equal(m.recordDays, 2);
+  assert.equal(m.plusDays, 1);
+  assert.equal(m.minusDays, 1);
+  const n = K.fxMonth(s, "2026-11");
+  assert.equal(n.total, 3000);
+  assert.equal(K.fxMonth(s, "2026-12").recordDays, 0);
+});

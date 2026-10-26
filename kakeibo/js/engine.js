@@ -1057,6 +1057,27 @@
     };
   };
 
+  // 月のカレンダー用：その月の日ごとの利益（損益＋リベート）と、月の合計・記録した日数
+  const fxMonth = (state, month) => {
+    const byDate = {};
+    state.transactions.forEach((t) => {
+      if (!t.fx || t.status !== "actual" || !t.date.startsWith(month)) return;
+      const d = byDate[t.date] || (byDate[t.date] = { date: t.date, pl: 0, rebate: 0, total: 0 });
+      d[t.fx === "rebate" ? "rebate" : "pl"] += t.amount;
+      d.total += t.amount;
+    });
+    const days = Object.values(byDate);
+    return {
+      month, byDate,
+      total: days.reduce((a, d) => a + d.total, 0),
+      pl: days.reduce((a, d) => a + d.pl, 0),
+      rebate: days.reduce((a, d) => a + d.rebate, 0),
+      recordDays: days.length,
+      plusDays: days.filter((d) => d.total > 0).length,
+      minusDays: days.filter((d) => d.total < 0).length,
+    };
+  };
+
   /* ---------- アラート ---------- */
 
   const windfallOfYear = (state, year) =>
@@ -1143,7 +1164,7 @@
     expandRecurrence, isWeekly, nextPayday, paydayOfMonth, collectEvents, forecast, hasInFlightInScope, resolveScope,
     sortedPayslips, overtimeRate, estimateNextPay,
     ageOn, birthdayAtAge, goalTargetDate, goalPlan, earningsCalendar, incomeCalendar, incomeYearToDate, isWorkday, categorySummary, windfallOfYear, alerts,
-    FX_LABEL, fxAccountId, addFxDay, removeFxDay, fxSummary, isNthWeekday, nthWeekdayOfMonth,
+    FX_LABEL, fxAccountId, addFxDay, removeFxDay, fxSummary, fxMonth, isNthWeekday, nthWeekdayOfMonth,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;
