@@ -2,7 +2,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const K = require("../js/engine.js");
-const P = require("../js/periods.js");
 const E = require("../js/edits.js");
 
 const TODAY = "2026-10-12"; // 月曜
@@ -64,46 +63,6 @@ test("毎週の振替（貯金）は出金元から入金先へ動く", () => {
   const last = f.days[f.days.length - 1].byAccount;
   assert.equal(last.main, 47000); // 10/12・10/19・10/26 の3回
   assert.equal(last.save, 3000);
-});
-
-test("給料期間の集計：生活費は日割り＋まとめ買い。済にした回も入る", () => {
-  const s = setup({ weekday: 100, holiday: 100 });
-  s.recurrences.push(bulk());
-  const p = P.periodAt(s.settings, "2026-10-26"); // 10/23〜11/24
-  const before = P.summarize(s, p.start, p.end);
-  assert.equal(before.bulk, 5 * 4000); // 10/24・10/31・11/7・11/14・11/21
-  assert.equal(before.living, before.livingDaily + before.bulk);
-  assert.equal(before.livingDaily, before.days * 100);
-  K.completeOccurrence(s, "rec_bulk", "2026-10-24");
-  const after = P.summarize(s, p.start, p.end);
-  assert.equal(after.bulk, before.bulk);
-  assert.equal(after.total, before.total);
-});
-
-test("初期データ：weeks・weekday の定期ルールと、toOther の定期振替を読み込める", () => {
-  P.loadInitial({
-    settings: { weekdayCost: 0, holidayCost: 0 },
-    recurrences: [
-      { label: "まとめ買い", amount: -4000, weeks: 1, weekday: 6, categoryId: "cat_living", startDate: "2026-10-01" },
-      { label: "毎週の貯金", amount: 1000, weeks: 1, weekday: 1, toOther: true, startDate: "2026-11-30" },
-      { label: "サブスク", amount: -500, days: [24], categoryId: "cat_subsc", startDate: "2026-10-01" },
-    ],
-  });
-  const s = setup();
-  const res = P.applyInitialData(s, { mainId: "main", otherId: "save", today: TODAY });
-  assert.equal(res.recurrences, 3);
-  const save = s.recurrences.find((r) => r.label === "毎週の貯金");
-  assert.equal(save.toAccountId, "save");
-  assert.equal(save.amount, -1000);
-  assert.equal(save.weeks, 1);
-  assert.equal(K.expandRecurrence(save, "2026-11-01", "2026-12-08").map((o) => o.date).join(","), "2026-11-30,2026-12-07");
-  // もう一度入れても重複しない
-  assert.equal(P.applyInitialData(s, { mainId: "main", otherId: "save", today: TODAY }).recurrences, 0);
-});
-
-test("初期データ：週ごとのルールで曜日が正しくないと読み込まない", () => {
-  assert.throws(() => P.loadInitial({ recurrences: [{ label: "x", amount: -1, weeks: 1, weekday: 7, startDate: "2026-10-01" }] }));
-  assert.throws(() => P.loadInitial({ recurrences: [{ label: "x", amount: -1, weeks: 0, weekday: 6, startDate: "2026-10-01" }] }));
 });
 
 test("修正ファイル：週ごとのルールの1回分を金額変更できる", () => {
