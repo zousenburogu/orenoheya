@@ -507,3 +507,17 @@ test("バックアップの促し：書き出しから7日で表示、書き出�
   assert.equal(K.backupStatus(s, "2026-10-15").due, true);
   assert.equal(K.backupStatus(K.emptyState(), "2026-10-20").due, false);
 });
+
+test("updateTransfer：日付とメモだけ変わり、口座の残高は動かない", () => {
+  const s = K.emptyState();
+  s.accounts.push({ id: "fx", name: "テストFX", balance: 50000, includeInTotal: true, balanceSet: true });
+  s.accounts.push({ id: "bank", name: "テスト銀行", balance: 10000, includeInTotal: true, balanceSet: true });
+  const t = K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 30000, date: "2026-10-02", status: "pending", label: "出金" });
+  assert.deepEqual(s.accounts.map((a) => a.balance), [20000, 10000]);
+  K.updateTransfer(s, t.id, { date: "2026-10-05", label: "  FX出金テスト " });
+  assert.deepEqual([t.date, t.label, t.status, t.amount], ["2026-10-05", "FX出金テスト", "pending", 30000]);
+  assert.deepEqual(s.accounts.map((a) => a.balance), [20000, 10000]);
+  assert.equal(K.updateTransfer(s, "nope", { date: "2026-10-06" }), null);
+  K.completeTransfer(s, t.id);
+  assert.deepEqual(s.accounts.map((a) => a.balance), [20000, 40000]);
+});

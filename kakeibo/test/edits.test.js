@@ -307,3 +307,26 @@ test("change：残高調整に名前・カテゴリを付けるとふつうの�
   const again = K.normalizeState(JSON.parse(JSON.stringify(s)));
   assert.equal(again.transactions.find((x) => x.label === "支払いテスト").adjustment, undefined);
 });
+
+test("change：振替は日付（着金予定日）とメモだけ変えられ、残高は動かない。金額の変更やカテゴリは適用しない", () => {
+  const s = setup();
+  K.addTransfer(s, { fromId: "main", toId: "sub", amount: 12345, date: "2026-10-05", status: "pending", label: "出金テスト" });
+  K.addTransfer(s, { fromId: "main", toId: "sub", amount: 2222, date: "2026-10-06", status: "pending", label: "" });
+  const before = s.accounts.map((a) => a.balance);
+  const r = E.apply(s, [
+    { action: "change", target: "出金テスト", from: { date: "2026-10-05", amount: 12345 }, to: { date: "2026-10-08" } },
+    { action: "change", target: "出金テスト", from: { date: "2026-10-08", amount: 12345 }, to: { date: "2026-10-08" } },
+    { action: "change", target: "出金テスト", from: { date: "2026-10-08", amount: 12345 }, to: { amount: 12000 } },
+    { action: "change", target: "出金テスト", from: { date: "2026-10-08", amount: 12345 }, to: { category: "生活費" } },
+    { action: "change", target: "テスト別口座", from: { date: "2026-10-06", amount: 2222 }, to: { date: "2026-10-07", label: "メモテスト" } },
+    { action: "delete", target: "出金テスト", date: "2026-10-08", amount: 12345 },
+  ], { today: TODAY });
+  assert.deepEqual(r.items.map((i) => i.status), ["ok", "skip", "fail", "fail", "ok", "fail"]);
+  assert.deepEqual(s.accounts.map((a) => a.balance), before);
+  const a = s.transfers.find((x) => x.amount === 12345);
+  assert.deepEqual([a.date, a.status, a.label], ["2026-10-08", "pending", "出金テスト"]);
+  const b = s.transfers.find((x) => x.amount === 2222);
+  assert.deepEqual([b.date, b.label], ["2026-10-07", "メモテスト"]);
+  assert.match(r.items[0].text, /振替「出金テスト」10\/05 .* → 10\/08（着金待ち）/);
+  assert.match(r.items[2].text, /金額は変えられません/);
+});

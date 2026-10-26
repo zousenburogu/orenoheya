@@ -574,10 +574,11 @@
         <span class="amt num">${esc(yen(x.amount))}</span>
         <span class="actions"><select data-action="transfer-status" data-id="${esc(x.id)}" aria-label="状態" style="width:auto;padding:4px 8px;font-size:14px">${Object.entries(K.TRANSFER_STATUS).map(([k, v]) => `<option value="${k}" ${k === x.status ? "selected" : ""}>${v}</option>`).join("")}</select>
         ${K.IN_FLIGHT.includes(x.status) ? `<button class="small primary" data-action="transfer-arrived" data-id="${esc(x.id)}">着金した</button>` : ""}
+        <button class="small ghost" data-action="transfer-edit" data-id="${esc(x.id)}" aria-label="日付とメモを編集">編集</button>
         <button class="small ghost danger" data-action="transfer-delete" data-id="${esc(x.id)}" aria-label="間違いとして取り消す">取り消し</button></span></li>`;
     };
     html += `<section class="card"><div class="row between"><h3>振替・出金の状況</h3><button class="small" data-action="go-transfer">＋ 振替</button></div>
-      <p class="tiny">予定 → 申請中 → 着金待ち → 着金済み。状態を変えると口座残高に自動で反映されます。お金が届いたら「着金した」、記録の間違いは「取り消し」を押します。</p>
+      <p class="tiny">予定 → 申請中 → 着金待ち → 着金済み。状態を変えると口座残高に自動で反映されます。お金が届いたら「着金した」、着金予定日やメモを変えるときは「編集」、記録の間違いは「取り消し」を押します。</p>
       ${active.length ? `<ul class="list">${active.map(trItem).join("")}</ul>` : `<p class="muted small">進行中の振替はありません</p>`}
       ${done.length ? `<details style="margin-top:8px"><summary>着金済み（最近10件）</summary><ul class="list">${done.map(trItem).join("")}</ul></details>` : ""}</section>`;
     return html;
@@ -1687,6 +1688,24 @@
     });
   };
 
+  // 振替の日付（着金予定日）とメモを直す。金額・口座は変えない（間違いは「取り消し」て入れ直す）
+  const transferSheet = (x) => {
+    sheetActions = {};
+    openSheet("振替を編集", `<div style="display:grid;gap:14px">
+      <p class="small muted" style="margin:0">${esc(accName(x.fromId))} → ${esc(accName(x.toId))}　<span class="num">${esc(yen(x.amount))}</span>（${esc(K.TRANSFER_STATUS[x.status])}）</p>
+      <label class="field">日付（着金予定日）<input type="date" name="date" value="${esc(x.date)}" required></label>
+      <label class="field">メモ<input name="label" value="${esc(x.label || "")}" placeholder="例: FX出金"></label>
+      <p class="tiny" style="margin:0">日付とメモを変えても、口座の残高は動きません。金額や口座が違うときは「取り消し」てから入れ直してください。</p>
+      ${foot(false)}</div>`, (fd) => {
+      const date = String(fd.get("date") || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("日付を入れてください"), false;
+      const moved = date !== x.date;
+      K.updateTransfer(state, x.id, { date, label: fd.get("label") });
+      commit();
+      toast(moved ? `着金予定日を${D.dayLabelLong(date)}にしました` : "保存しました");
+    });
+  };
+
   const txSheet = (x) => {
     const kind = x.amount < 0 ? "expense" : "income";
     sheetActions = { delete: () => {
@@ -2052,6 +2071,10 @@
     "account-new": () => accountSheet(null),
     "account-edit": (b) => accountSheet(K.accountById(state, b.dataset.id)),
     "account-balance": (b) => balanceSheet(K.accountById(state, b.dataset.id)),
+    "transfer-edit": (b) => {
+      const tr = state.transfers.find((x) => x.id === b.dataset.id);
+      if (tr) transferSheet(tr);
+    },
     "transfer-delete": (b) => {
       const tr = state.transfers.find((x) => x.id === b.dataset.id);
       if (!tr) return;

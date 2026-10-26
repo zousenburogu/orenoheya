@@ -3,6 +3,7 @@
        { "action": "add", "type": "income", "date": "2026-10-09", "amount": 1000, "label": "名前", "account": "口座名", "category": "カテゴリ名" },
        { "action": "add", "type": "expense", "date": "2026-10-09", "amount": 300, "label": "名前", "reflected": true },  // 残高に反映済みの実績（残高は動かさない）
        { "action": "change", "target": "名前", "from": { "date": "2026-10-05", "amount": 500 }, "to": { "date": "2026-10-09", "amount": 600, "label": "新しい名前", "category": "カテゴリ名" } },
+       { "action": "change", "target": "FX出金", "from": { "date": "2026-10-27", "amount": 50000 }, "to": { "date": "2026-10-28" } },  // 振替は日付・メモだけ
        { "action": "delete", "target": "名前", "date": "2026-10-05", "amount": 500 },
        { "action": "add-account", "name": "口座名", "includeInTotal": false, "balance": 0, "note": "メモ" },
        { "action": "transfer", "date": "2026-10-27", "amount": 50000, "from": "FX口座", "to": "銀行", "label": "FX出金", "status": "着金待ち", "reflected": "from" },
@@ -63,8 +64,17 @@
   };
 
   // 名前・日付・金額で既存の予定を探す。取引（予定・実績）と、まだ取引になっていない定期ルールの回が対象
-  const findTarget = (state, target, date, abs) => {
+  // withTransfers: 振替も対象にする（メモか口座名で照合。change で日付・メモを直す用）
+  const findTarget = (state, target, date, abs, { withTransfers = false } = {}) => {
     const hits = [];
+    if (withTransfers) {
+      const accName = (id) => (K.accountById(state, id) || {}).name || "";
+      state.transfers.forEach((x) => {
+        if (x.date !== date || x.amount !== abs) return;
+        const score = nameScore(target, x.label) || Math.min(1, Math.max(nameScore(target, accName(x.fromId)), nameScore(target, accName(x.toId))));
+        if (score) hits.push({ kind: "trf", x, score, label: x.label || `${accName(x.fromId)} → ${accName(x.toId)}`, signed: x.amount });
+      });
+    }
     state.transactions.forEach((t) => {
       const score = t.date === date && Math.abs(t.amount) === abs ? nameScore(target, t.label) : 0;
       if (score) hits.push({ kind: "tx", t, score, label: t.label, signed: t.amount });
@@ -178,10 +188,21 @@
           if (to.category !== undefined) toCategory = String(to.category).trim();
         }
         const label = `「${e.target}」${md(from.date)} ${K.yen(abs)}`;
-        const hits = findTarget(state, e.target, from.date, abs);
+        const hits = findTarget(state, e.target, from.date, abs, { withTransfers: !del });
         if (!hits.length) return fail(`見つかりません（適用しません）: ${label}`);
         if (hits.length > 1) return fail(`複数見つかりました（適用しません）: ${label} → ${hits.map((h) => `「${h.label || "無題"}」`).join("、")}`);
         const h = hits[0];
+        // 振替は日付（着金予定日）とメモだけ変えられる。残高は状態で決まるので動かない
+        if (h.kind === "trf") {
+          if (toAbs !== abs) return fail(`変更できません: 振替の金額は変えられません（アプリで「取り消し」て入れ直してください）: ${label}`);
+          if (toCategory !== undefined) return fail(`変更できません: 振替にはカテゴリがありません: ${label}`);
+          const sameMemo = toLabel === undefined || toLabel === h.x.label;
+          const head = `振替「${h.label}」${md(from.date)} ${K.yen(abs)}`;
+          if (toDate === from.date && sameMemo) return Object.assign(item, { status: "skip", text: `スキップ（変更がありません）: ${head}` });
+          K.updateTransfer(state, h.x.id, Object.assign({ date: toDate }, sameMemo ? {} : { label: toLabel }));
+          item.notes.push("振替の日付・メモだけを変えます（口座の残高は動きません）");
+          return ok(`変更: ${head} → ${md(toDate)}${sameMemo ? "" : `・メモ「${toLabel}」`}（${K.TRANSFER_STATUS[h.x.status]}）`);
+        }
         const sign = h.signed < 0 ? -1 : 1;
         const where = h.kind === "rec" ? "定期の1回分" : h.t.status === "actual" ? (h.t.adjustment ? "残高調整" : "実績") : "予定";
         if (!del && h.kind === "rec" && (toLabel !== undefined || toCategory !== undefined)) return fail(`変更できません: 定期ルールの1回分は名前・カテゴリを変えられません（ルールの画面で変えてください）: ${label}`);

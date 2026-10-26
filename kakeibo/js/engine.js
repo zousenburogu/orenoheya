@@ -399,6 +399,15 @@
     return state.transfers.filter((t) => IN_FLIGHT.includes(t.status) && ids.includes(t.toId)).reduce((s, t) => s + t.amount, 0);
   };
 
+  // 振替の日付（着金予定日）とメモだけを変える。口座の残高は状態で決まるので、日付やメモを変えても動かない
+  const updateTransfer = (state, id, patch = {}) => {
+    const t = state.transfers.find((x) => x.id === id);
+    if (!t) return null;
+    if (patch.date !== undefined) t.date = patch.date;
+    if (patch.label !== undefined) t.label = String(patch.label ?? "").trim();
+    return t;
+  };
+
   const removeTransfer = (state, id) => {
     const t = state.transfers.find((x) => x.id === id);
     if (!t) return;
@@ -1130,7 +1139,7 @@
     addTransaction, removeTransaction, updateTransaction, confirmTransaction, completeOccurrence,
     canUnconfirm, unconfirmTransaction,
     overrideOccurrence, skipOccurrence,
-    addTransfer, removeTransfer, setTransferStatus, completeTransfer, inFlightTotal,
+    addTransfer, updateTransfer, removeTransfer, setTransferStatus, completeTransfer, inFlightTotal,
     expandRecurrence, isWeekly, nextPayday, paydayOfMonth, collectEvents, forecast, hasInFlightInScope, resolveScope,
     sortedPayslips, overtimeRate, estimateNextPay,
     ageOn, birthdayAtAge, goalTargetDate, goalPlan, earningsCalendar, incomeCalendar, incomeYearToDate, isWorkday, categorySummary, windfallOfYear, alerts,
