@@ -886,7 +886,8 @@
     let html = `<section class="card"><h3>${esc(D.dayLabel(f.start))}から${esc(D.dayLabel(t))}まで（${f.dayCount}日）</h3>
       <div class="tiles">
         <div class="tile"><div class="label">利益の合計</div><div class="value num ${f.total > 0 ? "pos" : ""}">${esc(plusYen(f.total))}</div><div class="sub num">損益 ${esc(plusYen(f.pl))}・リベート ${esc(yen(f.rebate))}</div></div>
-        <div class="tile"><div class="label">1日平均</div><div class="value num">${esc(plusYen(f.average))}</div><div class="sub">土日も1日と数える</div></div>
+        <div class="tile"><div class="label">1日平均</div><div class="value num">${esc(plusYen(f.average))}</div><div class="sub">土日も1日と数える（${f.dayCount}日）</div></div>
+        <div class="tile"><div class="label">平日の1日平均</div><div class="value num">${esc(plusYen(f.weekdayAverage))}</div><div class="sub">土日を除く（${f.weekdayCount}日・祝日は平日）</div></div>
         <div class="tile"><div class="label">${f.year}年の合計</div><div class="value num">${esc(plusYen(f.yearTotal))}</div><div class="sub">給与以外の所得の目安は年20万円</div></div>
       </div>
       <p class="tiny" style="margin:8px 0 0">利益 ＝ MT5の損益（マイナス残高の補てんを含む）＋ リベート。FX口座への入金・出金は「振替」で記録するので、ここには入りません。</p></section>`;

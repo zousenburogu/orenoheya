@@ -218,3 +218,20 @@ test("FXの月カレンダー：その月の日ごとの利益（損益＋リベ
   assert.equal(n.total, 3000);
   assert.equal(K.fxMonth(s, "2026-12").recordDays, 0);
 });
+
+test("FXの平日の1日平均：土日を除いた日数で割る（祝日は平日扱い）", () => {
+  const s = setup();
+  K.addFxDay(s, { date: "2026-10-22", pl: 40000 }); // 木
+  K.addFxDay(s, { date: "2026-10-23", pl: 7000, rebate: 9000 }); // 金
+  K.addFxDay(s, { date: "2026-10-24", pl: -30000, rebate: 2000 }); // 土
+  K.addFxDay(s, { date: "2026-10-25", pl: 35000, rebate: 10000, reflected: true }); // 日
+  const f = K.fxSummary(s, { today: TODAY });
+  assert.equal(f.dayCount, 4);
+  assert.equal(f.weekdayCount, 2);
+  assert.equal(f.weekdayAverage, 36500); // 73,000 ÷ 2
+  assert.equal(f.average, 18250);
+  // 月曜の祝日（2026-10-12 スポーツの日）も平日として数える。10/12(月)〜10/18(日) は5日
+  const h = K.fxSummary(s, { today: "2026-10-18", start: "2026-10-12" });
+  assert.equal(h.weekdayCount, 5);
+  assert.equal(h.weekdayAverage, 0);
+});

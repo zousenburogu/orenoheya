@@ -1046,13 +1046,17 @@
     const inRange = days.filter((d) => d.date >= start && d.date <= today);
     const sum = (list, k) => list.reduce((a, d) => a + d[k], 0);
     const dayCount = start <= today ? D.diffDays(start, today) + 1 : 0;
+    // 平日（月〜金。祝日は平日として数える）だけの日数。FXは日本の祝日も動くため
+    let weekdayCount = 0;
+    for (let d = start; d <= today; d = D.addDays(d, 1)) if (D.dow(d) % 6 !== 0) weekdayCount++;
     const total = sum(inRange, "total");
     const year = today.slice(0, 4);
     const thisYear = days.filter((d) => d.date.startsWith(year));
     return {
-      start, today, days, dayCount,
+      start, today, days, dayCount, weekdayCount,
       pl: sum(inRange, "pl"), rebate: sum(inRange, "rebate"), total,
       average: dayCount ? Math.round(total / dayCount) : 0,
+      weekdayAverage: weekdayCount ? Math.round(total / weekdayCount) : 0,
       yearTotal: sum(thisYear, "total"), year: Number(year),
     };
   };
