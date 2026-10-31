@@ -196,3 +196,71 @@ test("アラート：着金待ちは入る前提で判定し、着金予定日�
 
 /* ---------- FXの利益カレンダー（月ごと） ---------- */
 
+
+/* ---------- FX出金のまとめ入力 ---------- */
+
+test("FX出金の着金予定日：2日後、土日祝なら翌営業日", () => {
+  assert.equal(K.fxArrivalDate("2026-10-26"), "2026-10-28"); // 月→水
+  assert.equal(K.fxArrivalDate("2026-10-29"), "2026-11-02"); // 木→土なので月
+  assert.equal(K.fxArrivalDate("2026-10-30"), "2026-11-02"); // 金→日なので月
+  assert.equal(K.fxArrivalDate("2026-11-01"), "2026-11-04"); // 日→11/3は文化の日なので水
+  assert.equal(K.fxArrivalDate("2026-10-26", 1), "2026-10-27");
+});
+
+test("FX出金：合計1件の着金待ちになり、出金後の残高から損益とリベートを記録して残高が合う", () => {
+  const s = setup();
+  K.addTransfer(s, { fromId: "bank", toId: "fx", amount: 30000, date: "2026-10-23", status: "done", label: "FX入金" });
+  const r = K.addFxWithdrawal(s, { date: "2026-10-23", amount: 3000 + 25000 + 9500, toId: "bank", arrival: "2026-10-26", balanceAfter: 0, rebate: 1200 });
+  assert.equal(r.error, undefined);
+  assert.equal(r.pl, 37500 - 30000 - 1200);
+  assert.equal(r.rebate, 1200);
+  assert.equal(r.transfer.status, "pending");
+  assert.equal(r.transfer.amount, 37500);
+  assert.equal(r.transfer.date, "2026-10-26");
+  assert.equal(r.transfer.label, "FX出金");
+  assert.equal(K.accountById(s, "fx").balance, 0);
+  assert.equal(K.accountById(s, "bank").balance, 70000); // 着金待ちなので銀行にはまだ入らない
+  assert.deepEqual(fxDays(s), [["2026-10-23", 6300, 1200]]);
+  K.completeTransfer(s, r.transfer.id, { today: "2026-10-26" });
+  assert.equal(K.accountById(s, "bank").balance, 107500);
+});
+
+test("FX出金：負けた日は損益がマイナス、損益を記録しない指定（balanceAfter なし）なら取引は増えない", () => {
+  const s = setup();
+  K.addTransfer(s, { fromId: "bank", toId: "fx", amount: 30000, date: "2026-10-23", status: "done" });
+  const lose = K.addFxWithdrawal(s, { date: "2026-10-23", amount: 20000, toId: "bank", balanceAfter: 0 });
+  assert.equal(lose.pl, -10000);
+  assert.equal(lose.transfer.date, "2026-10-26"); // 着金予定日を省くと2日後（日曜）→ 月曜
+  assert.equal(K.accountById(s, "fx").balance, 0);
+
+  const s2 = setup();
+  K.addTransfer(s2, { fromId: "bank", toId: "fx", amount: 30000, date: "2026-10-23", status: "done" });
+  K.addFxWithdrawal(s2, { date: "2026-10-23", amount: 30000, toId: "bank", arrived: true });
+  assert.equal(s2.transactions.filter((t) => t.fx).length, 0);
+  assert.equal(K.accountById(s2, "bank").balance, 100000);
+  // 差が0なら損益の記録は作らない
+  const s3 = setup();
+  K.addFxDay(s3, { date: "2026-10-23", pl: 5000 });
+  K.addFxWithdrawal(s3, { date: "2026-10-23", amount: 5000, toId: "bank", balanceAfter: 0 });
+  assert.equal(s3.transactions.filter((t) => t.fx).length, 1);
+});
+
+test("FX出金：口座・金額がおかしいときは何も記録しない", () => {
+  const s = setup();
+  assert.ok(K.addFxWithdrawal(s, { date: "2026-10-23", amount: 0, toId: "bank" }).error);
+  assert.ok(K.addFxWithdrawal(s, { date: "2026-10-23", amount: 1000, toId: "fx" }).error);
+  assert.ok(K.addFxWithdrawal(s, { date: "2026-10-23", amount: 1000, toId: "nope" }).error);
+  assert.equal(s.transfers.length + s.transactions.length, 0);
+});
+
+test("着金待ちのまとまり：同じ日・同じ入金先の2件以上だけを返す", () => {
+  const s = setup();
+  [[15000, "2026-11-02"], [9000, "2026-11-02"], [4000, "2026-11-04"]].forEach(([amount, date]) =>
+    K.addTransfer(s, { fromId: "fx", toId: "bank", amount, date, status: "pending", label: "FX出金" }));
+  K.addTransfer(s, { fromId: "fx", toId: "bank", amount: 1000, date: "2026-11-02", status: "done" });
+  const g = K.inFlightGroups(s);
+  assert.equal(g.length, 1);
+  assert.equal(g[0].date, "2026-11-02");
+  assert.equal(g[0].total, 24000);
+  assert.equal(g[0].ids.length, 2);
+});
