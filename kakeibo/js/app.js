@@ -404,6 +404,57 @@
 
   /* ---------- 画面: 入力 ---------- */
 
+  // FX出金：出金額と日付を入れるだけで、FX口座 → 入金先の着金待ち（合計1件）と、その日の損益をまとめて記録する
+  const fxOutToId = (fx) =>
+    [state.settings.fxWithdrawToId, state.settings.salaryAccountId].find((id) => id && id !== fx && K.accountById(state, id)) ||
+    (state.accounts.find((a) => a.id !== fx) || {}).id;
+
+  const fxOutForm = (t) => {
+    const fx = K.fxAccountId(state);
+    if (!fx) return `<section class="card"><p class="small" style="margin:0">FX口座が見つかりません。「メニュー › 口座」で、名前に「FX」を含む口座を作ると使えます。</p></section>`;
+    return `<section class="card"><form class="stack" data-form="fxout">
+      <label class="field">出金した額<input class="amount num" name="amount" inputmode="numeric" placeholder="0" required autofocus></label>
+      <p class="tiny" style="margin:-6px 0 0">何回かに分けて出金した日は ＋ でつなげて入れると、合計1件で記録します（例: 3000+4500+2200）。</p>
+      <div class="grid2"><label class="field">出金した日<input type="date" name="date" value="${esc(t)}" max="${esc(t)}" required></label>
+      <label class="field">着金予定日<input type="date" name="arrival" value="${esc(K.fxArrivalDate(t))}" required></label></div>
+      <p class="tiny" style="margin:-6px 0 0">着金予定日は出金した日の2日後（土日祝なら翌営業日）が自動で入ります。違うときだけ直してください。</p>
+      <label class="field">入金先<select name="toId">${accountOptions(fxOutToId(fx))}</select></label>
+      <label class="check"><input type="checkbox" name="withPl" checked> この日の損益も記録する</label>
+      <div class="grid2" data-fx-pl><label class="field">出金後のFX口座の残高<input class="num" name="balanceAfter" inputmode="numeric" value="0"></label>
+      <label class="field">うちリベート<input class="num" name="rebate" inputmode="numeric" placeholder="0"></label></div>
+      <div class="small" data-fx-preview></div>
+      <label class="check"><input type="checkbox" name="arrived"> もう着金している（着金済みで登録）</label>
+      <button class="primary" type="submit">FX出金を登録</button></form></section>`;
+  };
+
+  // 入力に合わせて「この日の損益」の見込みを表示する
+  const updateFxPreview = (form) => {
+    const box = form.querySelector("[data-fx-preview]");
+    const fx = K.accountById(state, K.fxAccountId(state));
+    if (!box || !fx) return;
+    const withPl = form.elements.withPl.checked;
+    form.querySelector("[data-fx-pl]").hidden = !withPl;
+    const amt = money(form.elements.amount.value);
+    const cur = Math.round(fx.balance || 0);
+    if (Number.isNaN(amt) || amt <= 0) {
+      box.innerHTML = `<span class="tiny">今のFX口座の残高：${esc(yen(cur))}</span>`;
+      return;
+    }
+    if (!withPl) {
+      box.innerHTML = `<span class="tiny">FX口座 ${esc(yen(cur))} → 出金 ${esc(yen(amt))} → 残り ${esc(yen(cur - amt))}</span>`;
+      return;
+    }
+    const after = money(form.elements.balanceAfter.value);
+    const rb = money(form.elements.rebate.value);
+    if (Number.isNaN(after) || Number.isNaN(rb)) {
+      box.innerHTML = `<span class="tiny">残高・リベートの数字を確認してください</span>`;
+      return;
+    }
+    const pl = amt + after - cur - rb;
+    box.innerHTML = `この日の損益 ${signed(pl)}${rb ? `　リベート ${signed(rb)}` : ""}
+      <span class="tiny" style="display:block">FX口座 ${esc(yen(cur))} ${pl + rb < 0 ? "−" : "＋"} ${rb ? "損益・リベート" : "損益"} ${esc(yen(Math.abs(pl + rb)))} − 出金 ${esc(yen(amt))} ＝ 残り ${esc(yen(after))}</span>`;
+  };
+
   const viewInput = () => {
     if (!state.accounts.length) return needAccounts();
     const t = today();
@@ -412,9 +463,12 @@
     let html = `<section><div class="seg" role="group" aria-label="入力の種類">
       <button aria-pressed="${kind === "expense"}" data-action="kind" data-key="expense">支出</button>
       <button aria-pressed="${kind === "income"}" data-action="kind" data-key="income">収入</button>
-      <button aria-pressed="${kind === "transfer"}" data-action="kind" data-key="transfer">振替</button></div></section>`;
+      <button aria-pressed="${kind === "transfer"}" data-action="kind" data-key="transfer">振替</button>
+      <button aria-pressed="${kind === "fxout"}" data-action="kind" data-key="fxout">FX出金</button></div></section>`;
 
-    if (kind === "transfer") {
+    if (kind === "fxout") {
+      html += fxOutForm(t);
+    } else if (kind === "transfer") {
       html += `<section class="card"><form class="stack" data-form="transfer">
         <label class="field">金額<input class="amount num" name="amount" inputmode="numeric" placeholder="0" required></label>
         <div class="grid2"><label class="field">出金元<select name="fromId" data-check-balance="1">${accountOptions(d.fromId || state.settings.salaryAccountId)}</select><span class="field-error" data-balance-error hidden></span></label>
@@ -560,6 +614,7 @@
     };
     html += `<section class="card"><div class="row between"><h3>振替・出金の状況</h3><button class="small" data-action="go-transfer">＋ 振替</button></div>
       <p class="tiny">予定 → 申請中 → 着金待ち → 着金済み。状態を変えると口座残高に自動で反映されます。お金が届いたら「着金した」、着金予定日やメモを変えるときは「編集」、記録の間違いは「取り消し」を押します。</p>
+      ${K.inFlightGroups(state).map((g) => `<div class="row between wrap" style="gap:8px;margin:6px 0"><span class="small">${esc(D.dayLabelLong(g.date))} ${esc(accName(g.toId))}に入る${g.ids.length}件 <b class="num">${esc(yen(g.total))}</b></span><button class="small primary" data-action="transfer-arrived-all" data-date="${esc(g.date)}" data-to="${esc(g.toId)}">まとめて着金した</button></div>`).join("")}
       ${active.length ? `<ul class="list">${active.map(trItem).join("")}</ul>` : `<p class="muted small">進行中の振替はありません</p>`}
       ${done.length ? `<details style="margin-top:8px"><summary>着金済み（最近10件）</summary><ul class="list">${done.map(trItem).join("")}</ul></details>` : ""}</section>`;
     return html;
@@ -834,6 +889,8 @@
     app.innerHTML = view();
     app.querySelectorAll("select[data-check-balance]").forEach(checkSelectedBalance);
     enhanceCalc(app);
+    const fxForm = app.querySelector('form[data-form="fxout"]');
+    if (fxForm) updateFxPreview(fxForm);
     drawCharts();
     saveUi();
   };
@@ -997,6 +1054,17 @@
   document.addEventListener("input", (e) => {
     if (e.target.dataset && e.target.dataset.calc) updateCalcHint(e.target);
   });
+  // FX出金：出金した日を変えたら着金予定日も合わせる（着金予定日を自分で直したあとは変えない）。損益の見込みも更新
+  const onFxOutInput = (e) => {
+    const form = e.target.closest && e.target.closest('form[data-form="fxout"]');
+    if (!form) return;
+    const el = form.elements;
+    if (e.target.name === "arrival") el.arrival.dataset.touched = "1";
+    if (e.target.name === "date" && e.target.value && !el.arrival.dataset.touched) el.arrival.value = K.fxArrivalDate(e.target.value);
+    updateFxPreview(form);
+  };
+  document.addEventListener("input", onFxOutInput);
+  document.addEventListener("change", onFxOutInput);
   document.addEventListener("focusout", (e) => {
     if (e.target.dataset && e.target.dataset.calc) applyCalc(e.target);
   });
@@ -1332,6 +1400,12 @@
       K.removeTransfer(state, b.dataset.id);
       commit();
     },
+    "transfer-arrived-all": (b) => {
+      const g = K.inFlightGroups(state).find((x) => x.date === b.dataset.date && x.toId === b.dataset.to);
+      if (!g) return;
+      if (!confirm(`${D.dayLabelLong(g.date)}に${accName(g.toId)}へ入る${g.ids.length}件（合計${yen(g.total)}）を着金済みにして、残高に足しますか？\n\n金額が予定と違うものがあるときは、1件ずつ「着金した」を押してください。`)) return;
+      undoable(`${g.ids.length}件を着金済みにして${accName(g.toId)}に${yen(g.total)}を足しました`, () => g.ids.forEach((id) => K.completeTransfer(state, id, { today: today() })));
+    },
     "transfer-arrived": (b) => {
       const tr = state.transfers.find((x) => x.id === b.dataset.id);
       if (!tr) return;
@@ -1615,6 +1689,30 @@
       K.addTransfer(state, { fromId: fd.get("fromId"), toId: fd.get("toId"), amount: amt, date: fd.get("date"), status: fd.get("status"), label: fd.get("label") });
       commit();
       toast("振替を登録しました");
+    } else if (kind === "fxout") {
+      const amt = money(fd.get("amount"));
+      if (Number.isNaN(amt) || amt <= 0) return toast("出金額を入力してください");
+      const date = fd.get("date");
+      if (!date || date > t) return toast("出金した日に未来の日付は選べません");
+      const fxId = K.fxAccountId(state);
+      const toId = fd.get("toId");
+      if (toId === fxId) return toast("入金先がFX口座になっています");
+      const withPl = fd.get("withPl") === "on";
+      const after = withPl ? money(fd.get("balanceAfter")) : null;
+      const rb = withPl ? money(fd.get("rebate")) : 0;
+      if (withPl && (Number.isNaN(after) || Number.isNaN(rb))) return toast("残高・リベートの数字を確認してください");
+      if (!withPl) {
+        const err = K.balanceError(state, fxId, amt);
+        if (err) return toast(`${err}。「この日の損益も記録する」をオンにすると、差を損益として記録します`);
+      }
+      const arrival = fd.get("arrival") || K.fxArrivalDate(date);
+      const arrived = fd.get("arrived") === "on";
+      const plText = (r) => (withPl && (r.pl || r.rebate) ? `。損益 ${r.pl > 0 ? "+" : ""}${yen(r.pl)}${r.rebate ? `・リベート ${yen(r.rebate)}` : ""}も記録` : "");
+      undoable((r) => `FX出金 ${yen(amt)}を登録しました（${D.dayLabel(arrival)}${arrived ? "に着金済み" : "に着金予定"}）${plText(r)}`, () => {
+        const r = K.addFxWithdrawal(state, { date, amount: amt, toId, arrival, arrived, balanceAfter: after, rebate: rb, fromId: fxId });
+        state.settings.fxWithdrawToId = toId;
+        return r;
+      });
     } else if (kind === "whatif") {
       const amt = money(fd.get("amount"));
       if (Number.isNaN(amt) || amt <= 0) return toast("金額を入力してください");

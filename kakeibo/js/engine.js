@@ -779,6 +779,45 @@
     return out;
   };
 
+  // FX出金の着金予定日：出金した日の days 日後。銀行の休業日なら翌営業日
+  const fxArrivalDate = (date, days = 2) => D.adjustBusinessDay(D.addDays(date, Math.max(0, Math.round(Number(days) || 0))), "next");
+
+  // FX出金をまとめて記録する（入力画面の「FX出金」用）
+  // amount: 出金した額の合計（何回かに分けて出金しても1件の振替にする）
+  // balanceAfter: 出金後のFX口座の実際の残高。数字を渡すと「今の残高 + 損益 − 出金 = 出金後の残高」になるよう、差をその日の損益として記録する
+  // rebate: 損益のうちリベートの額（別の記録にする）
+  const addFxWithdrawal = (state, { date, amount, toId, arrival, arrived = false, balanceAfter = null, rebate = 0, fromId } = {}) => {
+    const fx = fromId || fxAccountId(state);
+    const total = Math.round(Number(amount) || 0);
+    if (!fx || !accountById(state, fx)) return { error: "FX口座が見つかりません" };
+    if (!toId || !accountById(state, toId)) return { error: "入金先の口座が見つかりません" };
+    if (toId === fx) return { error: "入金先がFX口座になっています" };
+    if (!(total > 0)) return { error: "出金額を入力してください" };
+    let pl = 0;
+    let rb = 0;
+    if (balanceAfter !== null && balanceAfter !== undefined && balanceAfter !== "") {
+      const diff = total + Math.round(Number(balanceAfter) || 0) - Math.round(accountById(state, fx).balance || 0);
+      rb = Math.round(Number(rebate) || 0);
+      pl = diff - rb;
+      addFxDay(state, { date, pl, rebate: rb, accountId: fx });
+    }
+    const transfer = addTransfer(state, { fromId: fx, toId, amount: total, date: arrival || fxArrivalDate(date), status: arrived ? "done" : "pending", label: "FX出金" });
+    return { transfer, pl, rebate: rb };
+  };
+
+  // 同じ日に同じ口座へ入る、着金待ち・申請中の振替のまとまり（2件以上）
+  const inFlightGroups = (state) => {
+    const map = new Map();
+    state.transfers.filter((t) => IN_FLIGHT.includes(t.status)).forEach((t) => {
+      const k = `${t.date}|${t.toId}`;
+      if (!map.has(k)) map.set(k, { date: t.date, toId: t.toId, ids: [], total: 0 });
+      const g = map.get(k);
+      g.ids.push(t.id);
+      g.total += t.amount;
+    });
+    return [...map.values()].filter((g) => g.ids.length > 1).sort((a, b) => (a.date < b.date ? -1 : 1));
+  };
+
   const windfallOfYear = (state, year) =>
     state.transactions
       .filter((t) => t.categoryId === WINDFALL && t.amount > 0 && t.date.startsWith(String(year)))
@@ -861,7 +900,7 @@
     addTransfer, updateTransfer, removeTransfer, setTransferStatus, completeTransfer, inFlightTotal,
     expandRecurrence, isWeekly, nextPayday, paydayOfMonth, collectEvents, forecast, hasInFlightInScope, resolveScope,
     categorySummary, windfallOfYear, alerts,
-    FX_LABEL, fxAccountId, addFxDay, isNthWeekday, nthWeekdayOfMonth,
+    FX_LABEL, fxAccountId, addFxDay, fxArrivalDate, addFxWithdrawal, inFlightGroups, isNthWeekday, nthWeekdayOfMonth,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;
